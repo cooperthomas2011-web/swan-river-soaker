@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: swan-river-soaker-nsot-edition
-    runtime: node
-    plan: free
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /health
