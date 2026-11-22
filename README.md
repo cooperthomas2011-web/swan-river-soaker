@@ -36,7 +36,7 @@ Check it's running: open `https://swan-river-soaker-nsot-edition.onrender.com/he
 - **Perth spots:** challenges at Elizabeth Quay, Mends Street Jetty, Fremantle, Matilda Bay, Canning Bridge, Burswood, Claremont and Aquinas Bay, including three time trials. Tap "Show me the way" and follow the green light.
 - **Clips and photos:** save them or share them straight to TikTok and other apps from your phone.
 - **Bigger rooster tail:** it comes up out of the water from under the back of the ski, starts narrow and fans out much wider the higher it goes; where the water lands hasn't changed.
-- **Rooster tail:** one smooth, thick plume of tightly packed spray. It starts narrow at the back of the ski and widens a lot, steadily in a V, all the way up to a jagged top.
+- **Rooster tail:** a solid, thick column of dense spray that bursts out from under the very back of the ski, with white water boiling up at the stern. It widens steadily in a V into a big thick crown at the top, with lots of mist around it.
 - **Weather:** glassy and dead flat most of the time (the weather display at the top says GLASSY), sometimes calm, and only rarely a short spell of choppy or stormy water. The surf in the wave zone is always there.
 - **Smooth riding:** on flat water the ski stays planted and runs smoothly; it only gets thrown in the air in rough weather or in the wave zone (the jump key still works anywhere).
 - **Wave jumps:** when the ski properly leaves the water the jet sucks air, so the spray stops and the throttle does nothing until you land again (little bounces don't count).
