@@ -4427,7 +4427,7 @@ function updatePlayer(dt, ctl) {
   // ---- throttle / brake ----
   const thrIn = ctl.thr, brkIn = ctl.brake;
   P.thr += (thrIn - P.thr) * Math.min(1, dt * (thrIn > P.thr ? 3.2 * (S.accel ? 2.5 : 1) : 4)); const maxSp = st.spd, accK = S.accel ? 2.6 : 1;
-  if (!P.spin) if (brkIn > 0) { if (P.sp > 0.5) P.sp -= (30 + P.sp * .5) * dt * brkIn; else P.sp = Math.max(-9, P.sp - 14 * dt * brkIn); }
+  if (!P.spin) if ((P.air || 0) > .06) { /* airborne: the jet pump is out of the water, so no thrust and no braking */ } else if (brkIn > 0) { if (P.sp > 0.5) P.sp -= (30 + P.sp * .5) * dt * brkIn; else P.sp = Math.max(-9, P.sp - 14 * dt * brkIn); }
   else if (P.thr > 0.02) P.sp += (maxSp * P.thr - P.sp) * (1 - Math.exp(-dt * .75 * st.acc * accK * (P.sp < maxSp * .5 ? 1.6 : 1)));
   else { P.sp *= Math.exp(-dt * (.32 + .02 * Math.abs(P.sp))); if (Math.abs(P.sp) < .3) P.sp = 0; }
   if (P.air > 0) P.sp *= Math.exp(-dt * .05);
@@ -4490,7 +4490,7 @@ function updatePlayer(dt, ctl) {
   const nz = P.ski.userData.nozzle, ang = trimAngle(); nz.rotation.order = 'YXZ'; nz.rotation.x = ang; P.nzA = (P.nzA || 0) + (clamp(P.steer, -1, 1) - (P.nzA || 0)) * (1 - Math.exp(-dt * 3.2)); nz.rotation.y = -P.nzA * (30 * Math.PI / 180); P.ski.updateMatrixWorld(true); // cosmetic only: pump swivels with the bars and aims the spray
   nz.getWorldPosition(P.noz); nz.getWorldQuaternion(_q); P.dir.set(0, 0, -1).applyQuaternion(_q); // actual nozzle exit direction in world
   _v1.copy(P.dir).multiplyScalar(.12); P.noz.add(_v1);
-  const empty = P.tank <= 0.5, flow = P.spin ? 0 : (P.burst > 0 ? 1 : (P.thr > .06 ? clamp(P.thr, 0, 1) : .0) * (empty ? .24 : 1)); P.flow = lerp(P.flow, flow, Math.min(1, dt * (P.spin ? 40 : 10))); if (P.spin) P.flow = 0; if (P.burst > 0) P.burst -= dt;
+  const airOut = (P.air || 0) > .06, empty = P.tank <= 0.5, flow = P.spin || airOut ? 0 : (P.burst > 0 ? 1 : (P.thr > .06 ? clamp(P.thr, 0, 1) : .0) * (empty ? .24 : 1)); P.flow = lerp(P.flow, flow, Math.min(1, dt * (P.spin ? 40 : 10))); if (P.spin || airOut) P.flow = 0; if (P.burst > 0) P.burst -= dt;
   if (P.thr > .06 && !empty) P.tank = Math.max(0, P.tank - dt * (9 + 5 * P.thr)); else P.tank = Math.min(st.tank, P.tank + dt * st.fill * (P.thr > .06 ? .15 : 1));
   if (P.tank <= 0.5 && P.thr < .1) P.tank += dt * st.fill;
   if (P.id !== 'gti') P.tank = st.tank; // only the GTI 90 has a limited stream tank
@@ -10969,6 +10969,8 @@ function rmMistInit(scene) {
   RMM.mesh = new THREE.Points(g, RMM.mat); RMM.mesh.frustumCulled = false; RMM.mesh.renderOrder = 4; RMM.mesh.name = 'rmMist'; scene.add(RMM.mesh);
   RM.info.mist = 1;
 }
+// fine fill droplets: lots of tiny drops that fly with the jet (same gravity as the real stream) so it reads as dense spray, not beaded strands. Visual only: they never hit anything.
+function rm3Fill(x, y, z, vx, vy, vz, size, life) { const N = PART.N, i = PART.i = (PART.i + 1) % N, k3 = i * 3; PART.pos[k3] = x; PART.pos[k3 + 1] = y; PART.pos[k3 + 2] = z; PART.vel[k3] = vx; PART.vel[k3 + 1] = vy; PART.vel[k3 + 2] = vz; PART.age[i] = 0; PART.life[i] = life; PART.size[i] = size; PART.kind[i] = 2; PART.roo[i] = 3; if (PART.mine) PART.mine[i] = 0; }
 function rmMistAdd(x, y, z, vx, vy, vz, s0, gr, life, a0) {
   const i = RMM.i = (RMM.i + 1) % RMM.N, k3 = i * 3; RMM.pos[k3] = x; RMM.pos[k3 + 1] = y; RMM.pos[k3 + 2] = z; RMM.vel[k3] = vx; RMM.vel[k3 + 1] = vy; RMM.vel[k3 + 2] = vz;
   RMM.age[i] = 0; RMM.life[i] = life; RMM.s0[i] = s0; RMM.gr[i] = gr; RMM.a0[i] = a0;
@@ -10978,10 +10980,11 @@ function rmMist(dt) {
   const k = RMM.k = (Q === QUALITY.low ? .4 : Q === QUALITY.medium ? .7 : 1) * (RM_FPSMODE === 'fps' ? .75 : 1);
   const N = PART.N, p = PART.pos, v = PART.vel, age = PART.age, life = PART.life, roo = PART.roo, kind = PART.kind, as = PART.aSize, aa = PART.aAlpha, R = Math.random;
   // spawn budgets per frame; last frame's demand scales every droplet's chance evenly, so no part of the plume is starved
-  const budget0 = Math.ceil(5000 * k * dt) + 2, sc = RMM.dem > 0 ? Math.min(1, budget0 / RMM.dem) : 1; let budget = budget0, dem = 0, shB = Math.ceil(3000 * k * dt) + 1;
+  const budget0 = Math.ceil(5000 * k * dt) + 2, sc = RMM.dem > 0 ? Math.min(1, budget0 / RMM.dem) : 1; let budget = budget0, dem = 0, shB = Math.ceil(3000 * k * dt) + 1; const fill0 = Math.ceil(6500 * k * dt) + 1, fsc = RMM.fdem > 0 ? Math.min(1, fill0 / RMM.fdem) : 1; let fillB = fill0, fdem = 0;
   const off = (R() * N) | 0;
   for (let n = 0; n < N; n++) {
     const i = n + off < N ? n + off : n + off - N, t = roo[i]; if (t === 0) continue; const a = age[i], k3 = i * 3;
+    if (t === 3) { if (a < life[i]) { v[k3 + 1] -= 4 * dt; aa[i] *= .8; } continue; } // fill drops: top up gravity to match the real stream
     if (a >= life[i]) { // landed (or hit something): haze rolls out low over the water
       if (t === 1) { roo[i] = 2; const y = p[k3 + 1]; if (y < 4 && budget > 0 && R() < .45 * k) { budget--; rmMistAdd(p[k3], y + .3, p[k3 + 2], v[k3] * .1 + (R() - .5) * 6, .3 + R() * .8, v[k3 + 2] * .1 + (R() - .5) * 6, 1.4 + R() * 1.2, 2.2, 2 + R() * 1.6, .1 + R() * .04); } }
       continue; }
@@ -10989,7 +10992,8 @@ function rmMist(dt) {
     // thick at the base and widening as it climbs (other players' droplets are drawn bigger by the stock code, so bring them to the same size first)
     // once it passes the top the water has shattered: the falling side spreads out and turns see-through
     const fall = smooth(1, 9, -vy), grow = smooth(.03, 1, a);
-    as[i] *= (s ? .85 : .48) * (1 + 12 * Math.pow(grow, 1.3)) * (1 + .5 * fall); aa[i] *= (s ? lerp(1, .75, grow) : .8) * lerp(1, .5, fall);
+    as[i] *= (s ? .7 : .4) * (1 + 5 * Math.pow(grow, 1.3)) * (1 + .4 * fall); aa[i] *= (s ? lerp(1, .55, grow) : .7) * lerp(1, .5, fall);
+    if (fillB > 0) { const fr = (s ? 4.5 : 1.6) * k; fdem += fr * dt; if (R() < fr * dt * fsc) { fillB--; const sp = .3 + 4.2 * smooth(.04, 1, a), gz = .7 + 1.6 * smooth(.1, 1, a); rm3Fill(p[k3] + (R() - .5) * .2, p[k3 + 1] + (R() - .5) * .2, p[k3 + 2] + (R() - .5) * .2, vx + (R() - .5) * 2 * sp, vy + (R() - .5) * 1.4 * sp, vz + (R() - .5) * 2 * sp, (.1 + R() * .14) * gz, .5 + R() * .7); } }
     const wk = (s ? 1 : .25) * k, sheath = (1 - smooth(.3, .55, a)) * smooth(.02, .1, a), up = smooth(0, .5, a);
     if (a < .55) { // rolling, lumpy sheath around the young jet: a thick column, not a line
       if (shB > 0 && R() < 14 * sheath * wk * dt) { shB--; const m = .8 + R() * .15, sp = .5 + 5 * up * up;
@@ -11012,7 +11016,7 @@ function rmMist(dt) {
       rmMistAdd(p[k3] + (R() - .5) * .6, p[k3 + 1] + (R() - .5) * .6, p[k3 + 2] + (R() - .5) * .6, vx * m + lx * side, vy * .35 - R(), vz * m + lz * side, 1.6 + R() * 1.8, 2 + R() * 1.2, 1 + R() * .8, .1 + R() * .07);
     }
   }
-  RMM.dem = dem;
+  RMM.dem = dem; RMM.fdem = fdem;
   // 2) mist puffs: slow down fast, drift with the wind, sink gently, swell and thin out
   const M = RMM.N, mp = RMM.pos, mv = RMM.vel, ma = RMM.age, ml = RMM.life, s0 = RMM.s0, gr = RMM.gr, a0 = RMM.a0, S = RMM.aSize, A = RMM.aAlpha;
   const W = typeof WIND !== 'undefined' ? WIND : { x: 0, z: 0 }, wx = W.x * .9, wz = W.z * .9, dr = Math.exp(-1.8 * dt);
