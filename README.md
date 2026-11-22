@@ -122,6 +122,8 @@ Note: the auction runs on the server. Render's free plan can wipe saved bids whe
 
 ## Splash Coins (real money)
 
+**Stripe Managed Payments:** Stripe turns Managed Payments on by default, which needs a product tax code. Coin packs are sent with Stripe's video game code (`txcd_10201000`) and GST-inclusive prices, so players pay exactly the price shown. If Stripe ever asks for a different code, set `STRIPE_TAX_CODE` in Render → Environment. To switch Managed Payments off for coin purchases (then you handle GST yourself), set `STRIPE_MANAGED_PAYMENTS=off`.
+
 10 Splash Coins = $100,000 in game. Packs: 10 for $0.50, 50 for $1.00, 100 for $1.50, 500 for $4.50 (AUD).
 Players buy them in the Splash Store (the 💧 counter under your cash, or the banner at the top of the garage) and swap them for cash.
 Payments go through Stripe. Coins are stored on the server, not in the player's save file.
