@@ -4384,7 +4384,10 @@ const P = {
   x: 0, z: 0, y: 0, h: 0, sp: 0, lat: 0, yaw: 0, thr: 0, steer: 0, trim: 0.4, tank: 100, pitch: 0, roll: 0, vy: 0, air: 0, lean: 0, accel: 0, spSm: 0, ski: null, rider: null, id: 'spark', st: null, bumpT: 0, spray: 0, hit: 0, camShake: 0, wet: 0,
   fx: 0, fz: 1, sx: 0, sz: 0, flow: 0, noz: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1), vel: new THREE.Vector3(), active: false,
 };
-const CAMS = ['Behind', 'Front', 'First-person', 'Rear-facing', 'Side'];
+const CAMS = ['Behind', 'Front', 'First-person', 'Rear-facing', 'Side', 'Chase 3/4', 'Front 3/4', 'Far & high'];
+// fixed rigs (never zoom with speed): [angle from heading, distance x, height per metre back, look point ahead (m), look height]
+const CAM_RIG = { 0: [Math.PI, 1, .32, 5, 1.5], 5: [Math.PI - .75, .84, .28, -3, 3], 6: [.8, .78, .12, -7, 4], 7: [Math.PI, 1.7, 1.45, 6, 0] };
+const CAM_ORDER = [0, 5, 7, 6, 1, 2, 3, 4];
 const CAMSTATE = { mode: 0, yaw: 0, pitch: 0, pos: new THREE.Vector3(), look: new THREE.Vector3(), roll: 0, init: false, dist: 10, fovBoost: 0 };
 function playerStats() {
   const k = SKI_BY_ID[P.id] || SKIS[0], L = (n) => lv(n);
@@ -4424,7 +4427,7 @@ function updatePlayer(dt, ctl) {
   // ---- throttle / brake ----
   const thrIn = ctl.thr, brkIn = ctl.brake;
   P.thr += (thrIn - P.thr) * Math.min(1, dt * (thrIn > P.thr ? 3.2 * (S.accel ? 2.5 : 1) : 4)); const maxSp = st.spd, accK = S.accel ? 2.6 : 1;
-  if (!P.spin) if (brkIn > 0) { if (P.sp > 0.5) P.sp -= (30 + P.sp * .5) * dt * brkIn; else P.sp = Math.max(-9, P.sp - 14 * dt * brkIn); }
+  if (!P.spin) if ((P.air || 0) > .06) { /* airborne: the jet pump is out of the water, so no thrust and no braking */ } else if (brkIn > 0) { if (P.sp > 0.5) P.sp -= (30 + P.sp * .5) * dt * brkIn; else P.sp = Math.max(-9, P.sp - 14 * dt * brkIn); }
   else if (P.thr > 0.02) P.sp += (maxSp * P.thr - P.sp) * (1 - Math.exp(-dt * .75 * st.acc * accK * (P.sp < maxSp * .5 ? 1.6 : 1)));
   else { P.sp *= Math.exp(-dt * (.32 + .02 * Math.abs(P.sp))); if (Math.abs(P.sp) < .3) P.sp = 0; }
   if (P.air > 0) P.sp *= Math.exp(-dt * .05);
@@ -4487,7 +4490,7 @@ function updatePlayer(dt, ctl) {
   const nz = P.ski.userData.nozzle, ang = trimAngle(); nz.rotation.order = 'YXZ'; nz.rotation.x = ang; P.nzA = (P.nzA || 0) + (clamp(P.steer, -1, 1) - (P.nzA || 0)) * (1 - Math.exp(-dt * 3.2)); nz.rotation.y = -P.nzA * (30 * Math.PI / 180); P.ski.updateMatrixWorld(true); // cosmetic only: pump swivels with the bars and aims the spray
   nz.getWorldPosition(P.noz); nz.getWorldQuaternion(_q); P.dir.set(0, 0, -1).applyQuaternion(_q); // actual nozzle exit direction in world
   _v1.copy(P.dir).multiplyScalar(.12); P.noz.add(_v1);
-  const empty = P.tank <= 0.5, flow = P.spin ? 0 : (P.burst > 0 ? 1 : (P.thr > .06 ? clamp(P.thr, 0, 1) : .0) * (empty ? .24 : 1)); P.flow = lerp(P.flow, flow, Math.min(1, dt * (P.spin ? 40 : 10))); if (P.spin) P.flow = 0; if (P.burst > 0) P.burst -= dt;
+  const airOut = (P.air || 0) > .06, empty = P.tank <= 0.5, flow = P.spin || airOut ? 0 : (P.burst > 0 ? 1 : (P.thr > .06 ? clamp(P.thr, 0, 1) : .0) * (empty ? .24 : 1)); P.flow = lerp(P.flow, flow, Math.min(1, dt * (P.spin ? 40 : 10))); if (P.spin || airOut) P.flow = 0; if (P.burst > 0) P.burst -= dt;
   if (P.thr > .06 && !empty) P.tank = Math.max(0, P.tank - dt * (9 + 5 * P.thr)); else P.tank = Math.min(st.tank, P.tank + dt * st.fill * (P.thr > .06 ? .15 : 1));
   if (P.tank <= 0.5 && P.thr < .1) P.tank += dt * st.fill;
   if (P.id !== 'gti') P.tank = st.tank; // only the GTI 90 has a limited stream tank
@@ -4544,19 +4547,19 @@ function animateRider(dt, firstPerson) {
 }
 
 /* ---------- cameras ---------- */
-function camDistance() { return lerp(4, 16, SET.camDist); }
+function camDistance() { return lerp(8, 30, SET.camDist); }
 function updateCamera(dt, cam, snap) {
   const CS = CAMSTATE, m = CS.mode, fx = P.fx, fz = P.fz, dist = camDistance() * (P.mode === 'boat' ? P.ski.userData.camK : 1), shake = P.camShake * .25;
   const ud = P.ski.userData; P.ski.updateMatrixWorld(true);
   const headW = (ud.eye ? ud.eye.clone() : new THREE.Vector3(0, ud.hip.y + .95, ud.hip.z + .1)).applyMatrix4(P.ski.matrixWorld);
   const lookYaw = CS.yaw, lookPitch = CS.pitch;
-  const wantFov = SET.fov + (m >= 2 ? clamp(Math.abs(P.sp) / (P.st.spd) , 0, 1.2) * 7 : 0); // 3rd person keeps a steady view: no zooming with speed
+  const fpm = m === 2 || m === 3, wantFov = SET.fov + (fpm ? clamp(Math.abs(P.sp) / (P.st.spd) , 0, 1.2) * 7 : 0); // 3rd person keeps a steady view: no zooming with speed
   cam.fov = lerp(cam.fov, wantFov, Math.min(1, dt * 3)); cam.updateProjectionMatrix();
   const tp = new THREE.Vector3(), tl = new THREE.Vector3();
-  if (m === 0) { // behind: fixed distance and height (no zooming in or out with speed); only the heading is smoothed so it swings round through turns
-    const want = P.h + lookYaw; if (CS.ch === undefined || snap || !CS.init) CS.ch = want; CS.ch += Math.atan2(Math.sin(want - CS.ch), Math.cos(want - CS.ch)) * Math.min(1, dt * 5);
-    const up = 1.8 + dist * (.4 + lookPitch * .4) + (P.mode === 'boat' ? P.ski.userData.camUp : 0);
-    tp.set(P.x - Math.sin(CS.ch) * dist, P.y + up, P.z - Math.cos(CS.ch) * dist); tl.set(P.x + Math.sin(CS.ch) * 4, P.y + .9, P.z + Math.cos(CS.ch) * 4);
+  if (CAM_RIG[m]) { // behind / chase 3/4 / front 3/4 / far & high: fixed distance and height (no zooming with speed); only the heading is smoothed so it swings round through turns
+    const R = CAM_RIG[m], want = P.h + lookYaw; if (CS.ch === undefined || snap || !CS.init) CS.ch = want; CS.ch += Math.atan2(Math.sin(want - CS.ch), Math.cos(want - CS.ch)) * Math.min(1, dt * 5);
+    const d = dist * R[1], up = 1.8 + d * (R[2] + lookPitch * .4) + (P.mode === 'boat' ? P.ski.userData.camUp : 0), ca = CS.ch + R[0];
+    tp.set(P.x + Math.sin(ca) * d, P.y + up, P.z + Math.cos(ca) * d); tl.set(P.x + Math.sin(CS.ch) * R[3], P.y + R[4], P.z + Math.cos(CS.ch) * R[3]);
   } else if (m === 1) {
     const sgn = m === 0 ? -1 : 1, d = dist * (m === 1 ? .72 : 1), up = 1.2 + d * (.2 + lookPitch * .4) + (m === 1 ? .4 : 0) + (P.mode === 'boat' ? P.ski.userData.camUp : 0), ca = P.h + lookYaw;
     tp.set(P.x + Math.sin(ca) * d * sgn, P.y + up, P.z + Math.cos(ca) * d * sgn);
@@ -4564,19 +4567,19 @@ function updateCamera(dt, cam, snap) {
   } else if (m === 2) { tp.copy(headW); tl.set(headW.x + Math.sin(P.h + lookYaw) * 20 * Math.cos(lookPitch), headW.y - 1.2 + Math.sin(lookPitch) * 20, headW.z + Math.cos(P.h + lookYaw) * 20 * Math.cos(lookPitch)); }
   else { tp.copy(headW); tl.set(headW.x - Math.sin(P.h + lookYaw) * 20, headW.y - 1 + Math.sin(lookPitch) * 20, headW.z - Math.cos(P.h + lookYaw) * 20); }
   // land / water clearance for third person
-  if (m < 2) { const gh = groundH(tp.x, tp.z); const wy = gh < 0 ? waveH(tp.x, tp.z) : gh; tp.y = Math.max(tp.y, wy + 1.1); if (gh > 0) tp.y = Math.max(tp.y, gh + 1.5); }
+  if (m < 2 || CAM_RIG[m]) { const gh = groundH(tp.x, tp.z); const wy = gh < 0 ? waveH(tp.x, tp.z) : gh; tp.y = Math.max(tp.y, wy + 1.1); if (gh > 0) tp.y = Math.max(tp.y, gh + 1.5); }
   const fast = P.mode === 'boat' ? Math.min(34, Math.abs(P.sp) * .32) : 0, k = snap || !CS.init ? 1 : 1 - Math.exp(-dt * (m < 2 ? 7 + fast : 40));
-  if (m === 0 && CS.init && !snap) { const ky = 1 - Math.exp(-dt * 6); CS.pos.set(tp.x, CS.pos.y + (tp.y - CS.pos.y) * ky, tp.z); CS.look.set(tl.x, CS.look.y + (tl.y - CS.look.y) * ky, tl.z); }
+  if (CAM_RIG[m] && CS.init && !snap) { const ky = 1 - Math.exp(-dt * 6); CS.pos.set(tp.x, CS.pos.y + (tp.y - CS.pos.y) * ky, tp.z); CS.look.set(tl.x, CS.look.y + (tl.y - CS.look.y) * ky, tl.z); }
   else { CS.pos.lerp(tp, k); CS.look.lerp(tl, snap || !CS.init ? 1 : 1 - Math.exp(-dt * (m < 2 ? 10 + fast : 40))); } CS.init = true;
   cam.position.copy(CS.pos); if (shake) { cam.position.x += (Math.random() - .5) * shake; cam.position.y += (Math.random() - .5) * shake; }
   cam.up.set(0, 1, 0); cam.lookAt(CS.look);
-  if (m >= 2) { cam.rotateZ(-P.lean * .35 * (m === 2 ? 1 : -1)); }
-  cam.near = m >= 2 ? .12 : .4; cam.updateProjectionMatrix();
+  if (fpm) { cam.rotateZ(-P.lean * .35 * (m === 2 ? 1 : -1)); }
+  cam.near = fpm ? .12 : .4; cam.updateProjectionMatrix();
   // tuck the helmet away only in first person
-  CAMSTATE.fp = m >= 2;
+  CAMSTATE.fp = fpm;
   if (!INP.look) { CS.yaw *= Math.exp(-dt * 2.2); CS.pitch *= Math.exp(-dt * 2.2); }
 }
-function cycleCamera() { CAMSTATE.mode = (CAMSTATE.mode + 1) % CAMS.length; CAMSTATE.init = false; Bus.emit('toast', 'Camera: ' + CAMS[CAMSTATE.mode]); Bus.emit('cam'); }
+function cycleCamera() { const i = CAM_ORDER.indexOf(CAMSTATE.mode); CAMSTATE.mode = CAM_ORDER[(i + 1) % CAM_ORDER.length]; CAMSTATE.init = false; Bus.emit('toast', 'Camera: ' + CAMS[CAMSTATE.mode]); Bus.emit('cam'); }
 
 /* ===== 09c_boatplayer.js ===== */
 /* ===== OUTBOARD BOAT PHYSICS (Gwyntrex, Midnight Express): trim, prop immersion, ventilation "rooster", rolling rooster ===== */
@@ -5067,7 +5070,7 @@ FSH.pos = function (dt) {
   controls = function () { const c = _ctl.apply(this, arguments); if (FSH.on) { c.thr = 0; c.steer = 0; c.brake = P.sp > 1.5 ? .6 : 0; } return c; };
   animatePlayer = function (dt, fp) { if (FSH.on && FSH.hum) { if (P.mode === 'boat') { const ud = P.ski.userData; ud.wheel && (ud.wheel.rotation.z = 0); updateDash(ud, dt); } P.ski.updateMatrixWorld(true); fishUpdate(dt); return; } fishUpdate(dt); return _ap.apply(this, arguments); };
   updateCamera = function (dt, cam, snap) {
-    if (FSH.on && CAMSTATE.mode < 2) { const CS = CAMSTATE, ca = P.h + Math.PI + FSH.aim * .85 + CS.yaw, fx = Math.sin(ca), fz = Math.cos(ca), d = lerp(4.5, 11, SET.camDist) * (P.mode === 'boat' ? Math.min(1.35, Math.max(.8, P.ski.userData.camK * .45)) : 1), up = 2.3 + d * .12 + (P.mode === 'boat' ? P.ski.userData.camUp * .5 : 0);
+    if (FSH.on && (CAMSTATE.mode < 2 || CAMSTATE.mode >= 5)) { const CS = CAMSTATE, ca = P.h + Math.PI + FSH.aim * .85 + CS.yaw, fx = Math.sin(ca), fz = Math.cos(ca), d = lerp(4.5, 11, SET.camDist) * (P.mode === 'boat' ? Math.min(1.35, Math.max(.8, P.ski.userData.camK * .45)) : 1), up = 2.3 + d * .12 + (P.mode === 'boat' ? P.ski.userData.camUp * .5 : 0);
       const c = FSH.charPos.lengthSq() ? FSH.charPos : new THREE.Vector3(P.x, P.y, P.z), tp = new THREE.Vector3(c.x - fx * d + fz * (2.2 + d * .18), c.y + up, c.z - fz * d - fx * (2.2 + d * .18)), tl = new THREE.Vector3(c.x + fx * 16, c.y - .8 + CS.pitch * 6, c.z + fz * 16);
       const wy = waveH(tp.x, tp.z); tp.y = Math.max(tp.y, wy + 1.3); const k = snap || !CS.init ? 1 : 1 - Math.exp(-dt * 6); CS.pos.lerp(tp, k); CS.look.lerp(tl, k); CS.init = true; cam.fov = lerp(cam.fov, SET.fov - 4, Math.min(1, dt * 3)); cam.updateProjectionMatrix(); cam.position.copy(CS.pos); cam.up.set(0, 1, 0); cam.lookAt(CS.look); cam.near = .3; cam.updateProjectionMatrix(); if (!INP.look) { CS.yaw *= Math.exp(-dt * 2.2); CS.pitch *= Math.exp(-dt * 2.2); } return; }
     return _uc.apply(this, arguments); };
@@ -6273,7 +6276,7 @@ function buildUI() {
   pn.appendChild(row('Music volume', mkRange(0, 1, .01, () => SET.musicVol, v => { SET.musicVol = v; AUD.applyVolumes(); }, v => Math.round(v * 100) + '%')));
   pn.appendChild(row('Effects volume', mkRange(0, 1, .01, () => SET.sfxVol, v => { SET.sfxVol = v; AUD.applyVolumes(); }, v => Math.round(v * 100) + '%')));
   pn.appendChild(row('Ambient sounds', mkSwitch(() => SET.ambient, v => { SET.ambient = v; })));
-  pn.appendChild(row('3rd-person camera distance', mkRange(0, 1, .01, () => SET.camDist, v => { SET.camDist = v; CAMSTATE.init = false; }, v => (4 + v * 12).toFixed(1) + ' m')));
+  pn.appendChild(row('3rd-person camera distance', mkRange(0, 1, .01, () => SET.camDist, v => { SET.camDist = v; CAMSTATE.init = false; }, v => (8 + v * 22).toFixed(1) + ' m')));
   pn.appendChild(row('Field of view', mkRange(50, 100, 1, () => SET.fov, v => { SET.fov = v; }, v => v + '°')));
   pn.appendChild(row('Mouse look sensitivity', mkRange(.3, 2.5, .05, () => SET.mouseSens, v => { SET.mouseSens = v; }, v => v.toFixed(2) + '×')));
   const q = h('select'); [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra'], ['max', 'Max (supersampled)']].forEach(([k, n]) => { const o = h('option', '', n); o.value = k; q.appendChild(o); }); q.value = SET.quality; q.onchange = () => { SET.quality = q.value; persistSettings(); applyQuality(); }; q.addEventListener('keydown', e => e.stopPropagation());
@@ -10966,6 +10969,8 @@ function rmMistInit(scene) {
   RMM.mesh = new THREE.Points(g, RMM.mat); RMM.mesh.frustumCulled = false; RMM.mesh.renderOrder = 4; RMM.mesh.name = 'rmMist'; scene.add(RMM.mesh);
   RM.info.mist = 1;
 }
+// fine fill droplets: lots of tiny drops that fly with the jet (same gravity as the real stream) so it reads as dense spray, not beaded strands. Visual only: they never hit anything.
+function rm3Fill(x, y, z, vx, vy, vz, size, life) { const N = PART.N, i = PART.i = (PART.i + 1) % N, k3 = i * 3; PART.pos[k3] = x; PART.pos[k3 + 1] = y; PART.pos[k3 + 2] = z; PART.vel[k3] = vx; PART.vel[k3 + 1] = vy; PART.vel[k3 + 2] = vz; PART.age[i] = 0; PART.life[i] = life; PART.size[i] = size; PART.kind[i] = 2; PART.roo[i] = 3; if (PART.mine) PART.mine[i] = 0; }
 function rmMistAdd(x, y, z, vx, vy, vz, s0, gr, life, a0) {
   const i = RMM.i = (RMM.i + 1) % RMM.N, k3 = i * 3; RMM.pos[k3] = x; RMM.pos[k3 + 1] = y; RMM.pos[k3 + 2] = z; RMM.vel[k3] = vx; RMM.vel[k3 + 1] = vy; RMM.vel[k3 + 2] = vz;
   RMM.age[i] = 0; RMM.life[i] = life; RMM.s0[i] = s0; RMM.gr[i] = gr; RMM.a0[i] = a0;
@@ -10975,41 +10980,44 @@ function rmMist(dt) {
   const k = RMM.k = (Q === QUALITY.low ? .4 : Q === QUALITY.medium ? .7 : 1) * (RM_FPSMODE === 'fps' ? .75 : 1);
   const N = PART.N, p = PART.pos, v = PART.vel, age = PART.age, life = PART.life, roo = PART.roo, kind = PART.kind, as = PART.aSize, aa = PART.aAlpha, R = Math.random;
   // spawn budgets per frame; last frame's demand scales every droplet's chance evenly, so no part of the plume is starved
-  const budget0 = Math.ceil(5000 * k * dt) + 2, sc = RMM.dem > 0 ? Math.min(1, budget0 / RMM.dem) : 1; let budget = budget0, dem = 0, shB = Math.ceil(3000 * k * dt) + 1;
+  const budget0 = Math.ceil(5000 * k * dt) + 2, sc = RMM.dem > 0 ? Math.min(1, budget0 / RMM.dem) : 1; let budget = budget0, dem = 0, shB = Math.ceil(3000 * k * dt) + 1; const fill0 = Math.ceil(8000 * k * dt) + 1, fsc = RMM.fdem > 0 ? Math.min(1, fill0 / RMM.fdem) : 1; let fillB = fill0, fdem = 0;
   const off = (R() * N) | 0;
   for (let n = 0; n < N; n++) {
     const i = n + off < N ? n + off : n + off - N, t = roo[i]; if (t === 0) continue; const a = age[i], k3 = i * 3;
+    if (t === 3) { if (a < life[i]) { v[k3 + 1] -= 4 * dt; aa[i] *= .8; } continue; } // fill drops: top up gravity to match the real stream
     if (a >= life[i]) { // landed (or hit something): haze rolls out low over the water
       if (t === 1) { roo[i] = 2; const y = p[k3 + 1]; if (y < 4 && budget > 0 && R() < .45 * k) { budget--; rmMistAdd(p[k3], y + .3, p[k3 + 2], v[k3] * .1 + (R() - .5) * 6, .3 + R() * .8, v[k3 + 2] * .1 + (R() - .5) * 6, 1.4 + R() * 1.2, 2.2, 2 + R() * 1.6, .1 + R() * .04); } }
       continue; }
     const s = kind[i] === 0, vx = v[k3], vy = v[k3 + 1], vz = v[k3 + 2], hv = Math.hypot(vx, vz);
-    // thick at the base and widening as it climbs (other players' droplets are drawn bigger by the stock code, so bring them to the same size first)
-    // once it passes the top the water has shattered: the falling side spreads out and turns see-through
-    const fall = smooth(1, 9, -vy), grow = smooth(.03, 1, a);
-    as[i] *= (s ? .85 : .48) * (1 + 12 * Math.pow(grow, 1.3)) * (1 + .5 * fall); aa[i] *= (s ? lerp(1, .75, grow) : .8) * lerp(1, .5, fall);
-    const wk = (s ? 1 : .25) * k, sheath = (1 - smooth(.3, .55, a)) * smooth(.02, .1, a), up = smooth(0, .5, a);
-    if (a < .55) { // rolling, lumpy sheath around the young jet: a thick column, not a line
-      if (shB > 0 && R() < 14 * sheath * wk * dt) { shB--; const m = .8 + R() * .15, sp = .5 + 5 * up * up;
-        rmMistAdd(p[k3] + (R() - .5) * .4, p[k3 + 1] + (R() - .5) * .4, p[k3 + 2] + (R() - .5) * .4, vx * m + (R() - .5) * 2 * sp, vy * m + (R() - .4) * 2 * sp, vz * m + (R() - .5) * 2 * sp, .45 + R() * .35 + 5.5 * up * up, 1.5, .55 + R() * .5, .33 + R() * .13); }
+    // V shape: the plume's width grows in a straight line from the narrow nozzle all the way up the climb
+    // (lin goes 0 -> 1 between leaving the nozzle and the top of the arc). Other players' droplets are drawn bigger by the stock code, so they start smaller here.
+    const vy0 = vy + 20 * a, Ta = Math.min(1.2, Math.max(.6, vy0 / 20)), lin = Math.min(1, a / Ta), fall = smooth(1, 9, -vy), g2 = () => R() + R() - 1;
+    as[i] *= (s ? .95 : .5) * (1 + 2.8 * lin) * (1 + .4 * fall); aa[i] *= (s ? lerp(1, .62, lin) : .7) * lerp(1, .55, fall);
+    const wk = (s ? 1 : .25) * k, w = .1 + 2.2 * lin; // half-width of the V at this point (m)
+    if (fillB > 0) { const fr = (s ? 4.5 + 5 * lin : 1.2) * k; fdem += fr * dt; if (R() < fr * dt * fsc) { fillB--; const j = .25 + .9 * lin;
+      rm3Fill(p[k3] + g2() * 1.2 * w, p[k3 + 1] + g2() * .8 * w, p[k3 + 2] + g2() * 1.2 * w, vx + g2() * 2 * j, vy + g2() * 1.4 * j, vz + g2() * 2 * j, (.11 + R() * .13) * (.9 + 1.3 * lin), .4 + R() * .45); } }
+    if (a < Ta) { // the climbing part: a rolling, lumpy sheath that fills the V evenly from the narrow base up
+      if (a > .02 && shB > 0 && R() < 9 * wk * dt) { shB--; const m = .85 + R() * .1, j = .35 + 1.1 * lin;
+        rmMistAdd(p[k3] + g2() * 1.1 * w, p[k3 + 1] + g2() * .8 * w, p[k3 + 2] + g2() * 1.1 * w, vx * m + g2() * 2 * j, vy * m + g2() * 1.4 * j, vz * m + g2() * 2 * j, .35 + R() * .3 + 2.4 * lin, 1.1, .5 + R() * .45, .26 + R() * .12); }
       continue; }
-    const crown = (1 - smooth(0, 6, Math.abs(vy))) * smooth(.12, .35, a), veil = smooth(2, 8, -vy) * smooth(.3, .6, a), brk = smooth(.3, .6, a) * (1 - smooth(1.1, 2, a));
-    const w1 = 1.1 * brk, w2 = 4 * crown, w3 = 2.2 * veil, rate = (w1 + w2 + w3) * wk; dem += rate * dt;
+    const crown = 1 - smooth(0, 6, Math.abs(vy)), veil = smooth(2, 8, -vy), brk = smooth(Ta, Ta + .3, a) * (1 - smooth(Ta + .8, Ta + 1.6, a));
+    const w1 = 1.1 * brk, w2 = 3 * crown, w3 = 2.2 * veil, rate = (w1 + w2 + w3) * wk; dem += rate * dt;
     if (budget <= 0 || R() >= rate * dt * sc) continue;
     budget--; const pick = R() * (w1 + w2 + w3);
     // sideways = across the plume (perpendicular to where the droplet is heading)
     let lx, lz; if (hv > 1) { lx = -vz / hv; lz = vx / hv; } else { const an = R() * 6.2832; lx = Math.cos(an); lz = Math.sin(an); }
     if (pick < w1) { // the jet tearing apart into mist as it flies
-      const m = .45 + R() * .4, sp = 2.5 + 6 * smooth(.05, .8, a);
-      rmMistAdd(p[k3] + (R() - .5) * .5, p[k3 + 1] + (R() - .5) * .5, p[k3 + 2] + (R() - .5) * .5, vx * m + (R() - .5) * 2 * sp, vy * m + (R() - .3) * sp, vz * m + (R() - .5) * 2 * sp, 2 + R() * 2 + 4.5 * smooth(.1, 1, a), 1.7 + R() * 1.8, 1 + R() * 1.2, .18 + R() * .12);
+      const m = .45 + R() * .4, sp = 1.5 + 2.5 * smooth(Ta, Ta + 1, a);
+      rmMistAdd(p[k3] + (R() - .5) * .5, p[k3 + 1] + (R() - .5) * .5, p[k3 + 2] + (R() - .5) * .5, vx * m + (R() - .5) * 2 * sp, vy * m + (R() - .3) * sp, vz * m + (R() - .5) * 2 * sp, 1.8 + R() * 1.6 + 1.5 * smooth(Ta, Ta + 1, a), 1.5 + R() * 1.5, 1 + R() * 1.2, .17 + R() * .11);
     } else if (pick < w1 + w2) { // crown: the top of the arch curls over and fans out wide, like a fountain head
-      const m = .3 + R() * .35, f = (R() - .5) * 2, side = f * (5 + 14 * Math.abs(f));
-      rmMistAdd(p[k3] + (R() - .5) * .8, p[k3 + 1] + (R() - .4) * .8, p[k3 + 2] + (R() - .5) * .8, vx * m + lx * side + (R() - .5) * 2, (R() - .1) * 3.5, vz * m + lz * side + (R() - .5) * 2, 3.6 + R() * 3.6, 1.9 + R() * 1.8, 1.5 + R() * 1.4, .17 + R() * .12);
+      const m = .3 + R() * .35, f = (R() - .5) * 2, side = f * (2.2 + 4 * Math.abs(f));
+      rmMistAdd(p[k3] + (R() - .5) * .8, p[k3 + 1] + (R() - .4) * .8, p[k3 + 2] + (R() - .5) * .8, vx * m + lx * side + (R() - .5) * 2, (R() - .1) * 3.5, vz * m + lz * side + (R() - .5) * 2, 2.2 + R() * 2, 1.6 + R() * 1.4, 1.3 + R() * 1.2, .16 + R() * .1);
     } else { // veil: the falling side comes down as a wide, see-through curtain of fine spray
       const m = .35 + R() * .15, side = (R() - .5) * 8;
       rmMistAdd(p[k3] + (R() - .5) * .6, p[k3 + 1] + (R() - .5) * .6, p[k3 + 2] + (R() - .5) * .6, vx * m + lx * side, vy * .35 - R(), vz * m + lz * side, 1.6 + R() * 1.8, 2 + R() * 1.2, 1 + R() * .8, .1 + R() * .07);
     }
   }
-  RMM.dem = dem;
+  RMM.dem = dem; RMM.fdem = fdem;
   // 2) mist puffs: slow down fast, drift with the wind, sink gently, swell and thin out
   const M = RMM.N, mp = RMM.pos, mv = RMM.vel, ma = RMM.age, ml = RMM.life, s0 = RMM.s0, gr = RMM.gr, a0 = RMM.a0, S = RMM.aSize, A = RMM.aAlpha;
   const W = typeof WIND !== 'undefined' ? WIND : { x: 0, z: 0 }, wx = W.x * .9, wz = W.z * .9, dr = Math.exp(-1.8 * dt);

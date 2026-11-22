@@ -36,7 +36,9 @@ Check it's running: open `https://swan-river-soaker-nsot-edition.onrender.com/he
 - **Perth spots:** challenges at Elizabeth Quay, Mends Street Jetty, Fremantle, Matilda Bay, Canning Bridge, Burswood, Claremont and Aquinas Bay, including three time trials. Tap "Show me the way" and follow the green light.
 - **Clips and photos:** save them or share them straight to TikTok and other apps from your phone.
 - **Bigger rooster tail:** it comes up out of the water from under the back of the ski, starts narrow and fans out much wider the higher it goes; where the water lands hasn't changed.
-- **Steadier chase camera:** a bit closer and higher, and it stays the same distance however fast you go (no zooming), so you see the ski and the rooster tail together.
+- **Finer spray in a V:** the rooster tail is made of lots of tiny, tightly packed droplets. It starts narrow at the back of the ski and widens steadily in a V all the way up to a jagged top.
+- **Wave jumps:** when the ski leaves the water the jet sucks air, so the spray stops and the throttle does nothing until you land again.
+- **Cameras (press P to cycle):** Behind (further back and higher) → Chase 3/4 (behind and off to the side) → Far & high (way up, looking down on the whole rooster tail) → Front 3/4 (ahead and to the side, looking back) → Front → First-person → Rear-facing → Side. None of them zoom in or out with speed. The mouse wheel / camera distance setting still moves them closer or further.
 - **Add to home screen:** on a phone, open the game, then use Share → Add to Home Screen (iPhone) or the menu → Install app (Android). It opens full screen like an app.
 
 **Private parties (online):** on the Online screen, type a party code or tap **New code**. Friends who use the same code share a private river with only you. In the 📋 panel you can copy an invite link and start a 3-minute party round: **Team soak battle** (soak the other team) or **King of the hill** (hold the pink zone on your own). Winners get $5,000.
