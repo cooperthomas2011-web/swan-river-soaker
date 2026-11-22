@@ -4384,7 +4384,10 @@ const P = {
   x: 0, z: 0, y: 0, h: 0, sp: 0, lat: 0, yaw: 0, thr: 0, steer: 0, trim: 0.4, tank: 100, pitch: 0, roll: 0, vy: 0, air: 0, lean: 0, accel: 0, spSm: 0, ski: null, rider: null, id: 'spark', st: null, bumpT: 0, spray: 0, hit: 0, camShake: 0, wet: 0,
   fx: 0, fz: 1, sx: 0, sz: 0, flow: 0, noz: new THREE.Vector3(), dir: new THREE.Vector3(0, 0, -1), vel: new THREE.Vector3(), active: false,
 };
-const CAMS = ['Behind', 'Front', 'First-person', 'Rear-facing', 'Side'];
+const CAMS = ['Behind', 'Front', 'First-person', 'Rear-facing', 'Side', 'Chase 3/4', 'Front 3/4', 'Far & high'];
+// fixed rigs (never zoom with speed): [angle from heading, distance x, height per metre back, look point ahead (m), look height]
+const CAM_RIG = { 0: [Math.PI, 1, .32, 5, 1.5], 5: [Math.PI - .75, .84, .28, -3, 3], 6: [.8, .78, .12, -7, 4], 7: [Math.PI, 1.7, 1.45, 6, 0] };
+const CAM_ORDER = [0, 5, 7, 6, 1, 2, 3, 4];
 const CAMSTATE = { mode: 0, yaw: 0, pitch: 0, pos: new THREE.Vector3(), look: new THREE.Vector3(), roll: 0, init: false, dist: 10, fovBoost: 0 };
 function playerStats() {
   const k = SKI_BY_ID[P.id] || SKIS[0], L = (n) => lv(n);
@@ -4544,19 +4547,19 @@ function animateRider(dt, firstPerson) {
 }
 
 /* ---------- cameras ---------- */
-function camDistance() { return lerp(4, 16, SET.camDist); }
+function camDistance() { return lerp(8, 30, SET.camDist); }
 function updateCamera(dt, cam, snap) {
   const CS = CAMSTATE, m = CS.mode, fx = P.fx, fz = P.fz, dist = camDistance() * (P.mode === 'boat' ? P.ski.userData.camK : 1), shake = P.camShake * .25;
   const ud = P.ski.userData; P.ski.updateMatrixWorld(true);
   const headW = (ud.eye ? ud.eye.clone() : new THREE.Vector3(0, ud.hip.y + .95, ud.hip.z + .1)).applyMatrix4(P.ski.matrixWorld);
   const lookYaw = CS.yaw, lookPitch = CS.pitch;
-  const wantFov = SET.fov + (m >= 2 ? clamp(Math.abs(P.sp) / (P.st.spd) , 0, 1.2) * 7 : 0); // 3rd person keeps a steady view: no zooming with speed
+  const fpm = m === 2 || m === 3, wantFov = SET.fov + (fpm ? clamp(Math.abs(P.sp) / (P.st.spd) , 0, 1.2) * 7 : 0); // 3rd person keeps a steady view: no zooming with speed
   cam.fov = lerp(cam.fov, wantFov, Math.min(1, dt * 3)); cam.updateProjectionMatrix();
   const tp = new THREE.Vector3(), tl = new THREE.Vector3();
-  if (m === 0) { // behind: fixed distance and height (no zooming in or out with speed); only the heading is smoothed so it swings round through turns
-    const want = P.h + lookYaw; if (CS.ch === undefined || snap || !CS.init) CS.ch = want; CS.ch += Math.atan2(Math.sin(want - CS.ch), Math.cos(want - CS.ch)) * Math.min(1, dt * 5);
-    const up = 1.8 + dist * (.4 + lookPitch * .4) + (P.mode === 'boat' ? P.ski.userData.camUp : 0);
-    tp.set(P.x - Math.sin(CS.ch) * dist, P.y + up, P.z - Math.cos(CS.ch) * dist); tl.set(P.x + Math.sin(CS.ch) * 4, P.y + .9, P.z + Math.cos(CS.ch) * 4);
+  if (CAM_RIG[m]) { // behind / chase 3/4 / front 3/4 / far & high: fixed distance and height (no zooming with speed); only the heading is smoothed so it swings round through turns
+    const R = CAM_RIG[m], want = P.h + lookYaw; if (CS.ch === undefined || snap || !CS.init) CS.ch = want; CS.ch += Math.atan2(Math.sin(want - CS.ch), Math.cos(want - CS.ch)) * Math.min(1, dt * 5);
+    const d = dist * R[1], up = 1.8 + d * (R[2] + lookPitch * .4) + (P.mode === 'boat' ? P.ski.userData.camUp : 0), ca = CS.ch + R[0];
+    tp.set(P.x + Math.sin(ca) * d, P.y + up, P.z + Math.cos(ca) * d); tl.set(P.x + Math.sin(CS.ch) * R[3], P.y + R[4], P.z + Math.cos(CS.ch) * R[3]);
   } else if (m === 1) {
     const sgn = m === 0 ? -1 : 1, d = dist * (m === 1 ? .72 : 1), up = 1.2 + d * (.2 + lookPitch * .4) + (m === 1 ? .4 : 0) + (P.mode === 'boat' ? P.ski.userData.camUp : 0), ca = P.h + lookYaw;
     tp.set(P.x + Math.sin(ca) * d * sgn, P.y + up, P.z + Math.cos(ca) * d * sgn);
@@ -4564,19 +4567,19 @@ function updateCamera(dt, cam, snap) {
   } else if (m === 2) { tp.copy(headW); tl.set(headW.x + Math.sin(P.h + lookYaw) * 20 * Math.cos(lookPitch), headW.y - 1.2 + Math.sin(lookPitch) * 20, headW.z + Math.cos(P.h + lookYaw) * 20 * Math.cos(lookPitch)); }
   else { tp.copy(headW); tl.set(headW.x - Math.sin(P.h + lookYaw) * 20, headW.y - 1 + Math.sin(lookPitch) * 20, headW.z - Math.cos(P.h + lookYaw) * 20); }
   // land / water clearance for third person
-  if (m < 2) { const gh = groundH(tp.x, tp.z); const wy = gh < 0 ? waveH(tp.x, tp.z) : gh; tp.y = Math.max(tp.y, wy + 1.1); if (gh > 0) tp.y = Math.max(tp.y, gh + 1.5); }
+  if (m < 2 || CAM_RIG[m]) { const gh = groundH(tp.x, tp.z); const wy = gh < 0 ? waveH(tp.x, tp.z) : gh; tp.y = Math.max(tp.y, wy + 1.1); if (gh > 0) tp.y = Math.max(tp.y, gh + 1.5); }
   const fast = P.mode === 'boat' ? Math.min(34, Math.abs(P.sp) * .32) : 0, k = snap || !CS.init ? 1 : 1 - Math.exp(-dt * (m < 2 ? 7 + fast : 40));
-  if (m === 0 && CS.init && !snap) { const ky = 1 - Math.exp(-dt * 6); CS.pos.set(tp.x, CS.pos.y + (tp.y - CS.pos.y) * ky, tp.z); CS.look.set(tl.x, CS.look.y + (tl.y - CS.look.y) * ky, tl.z); }
+  if (CAM_RIG[m] && CS.init && !snap) { const ky = 1 - Math.exp(-dt * 6); CS.pos.set(tp.x, CS.pos.y + (tp.y - CS.pos.y) * ky, tp.z); CS.look.set(tl.x, CS.look.y + (tl.y - CS.look.y) * ky, tl.z); }
   else { CS.pos.lerp(tp, k); CS.look.lerp(tl, snap || !CS.init ? 1 : 1 - Math.exp(-dt * (m < 2 ? 10 + fast : 40))); } CS.init = true;
   cam.position.copy(CS.pos); if (shake) { cam.position.x += (Math.random() - .5) * shake; cam.position.y += (Math.random() - .5) * shake; }
   cam.up.set(0, 1, 0); cam.lookAt(CS.look);
-  if (m >= 2) { cam.rotateZ(-P.lean * .35 * (m === 2 ? 1 : -1)); }
-  cam.near = m >= 2 ? .12 : .4; cam.updateProjectionMatrix();
+  if (fpm) { cam.rotateZ(-P.lean * .35 * (m === 2 ? 1 : -1)); }
+  cam.near = fpm ? .12 : .4; cam.updateProjectionMatrix();
   // tuck the helmet away only in first person
-  CAMSTATE.fp = m >= 2;
+  CAMSTATE.fp = fpm;
   if (!INP.look) { CS.yaw *= Math.exp(-dt * 2.2); CS.pitch *= Math.exp(-dt * 2.2); }
 }
-function cycleCamera() { CAMSTATE.mode = (CAMSTATE.mode + 1) % CAMS.length; CAMSTATE.init = false; Bus.emit('toast', 'Camera: ' + CAMS[CAMSTATE.mode]); Bus.emit('cam'); }
+function cycleCamera() { const i = CAM_ORDER.indexOf(CAMSTATE.mode); CAMSTATE.mode = CAM_ORDER[(i + 1) % CAM_ORDER.length]; CAMSTATE.init = false; Bus.emit('toast', 'Camera: ' + CAMS[CAMSTATE.mode]); Bus.emit('cam'); }
 
 /* ===== 09c_boatplayer.js ===== */
 /* ===== OUTBOARD BOAT PHYSICS (Gwyntrex, Midnight Express): trim, prop immersion, ventilation "rooster", rolling rooster ===== */
@@ -5067,7 +5070,7 @@ FSH.pos = function (dt) {
   controls = function () { const c = _ctl.apply(this, arguments); if (FSH.on) { c.thr = 0; c.steer = 0; c.brake = P.sp > 1.5 ? .6 : 0; } return c; };
   animatePlayer = function (dt, fp) { if (FSH.on && FSH.hum) { if (P.mode === 'boat') { const ud = P.ski.userData; ud.wheel && (ud.wheel.rotation.z = 0); updateDash(ud, dt); } P.ski.updateMatrixWorld(true); fishUpdate(dt); return; } fishUpdate(dt); return _ap.apply(this, arguments); };
   updateCamera = function (dt, cam, snap) {
-    if (FSH.on && CAMSTATE.mode < 2) { const CS = CAMSTATE, ca = P.h + Math.PI + FSH.aim * .85 + CS.yaw, fx = Math.sin(ca), fz = Math.cos(ca), d = lerp(4.5, 11, SET.camDist) * (P.mode === 'boat' ? Math.min(1.35, Math.max(.8, P.ski.userData.camK * .45)) : 1), up = 2.3 + d * .12 + (P.mode === 'boat' ? P.ski.userData.camUp * .5 : 0);
+    if (FSH.on && (CAMSTATE.mode < 2 || CAMSTATE.mode >= 5)) { const CS = CAMSTATE, ca = P.h + Math.PI + FSH.aim * .85 + CS.yaw, fx = Math.sin(ca), fz = Math.cos(ca), d = lerp(4.5, 11, SET.camDist) * (P.mode === 'boat' ? Math.min(1.35, Math.max(.8, P.ski.userData.camK * .45)) : 1), up = 2.3 + d * .12 + (P.mode === 'boat' ? P.ski.userData.camUp * .5 : 0);
       const c = FSH.charPos.lengthSq() ? FSH.charPos : new THREE.Vector3(P.x, P.y, P.z), tp = new THREE.Vector3(c.x - fx * d + fz * (2.2 + d * .18), c.y + up, c.z - fz * d - fx * (2.2 + d * .18)), tl = new THREE.Vector3(c.x + fx * 16, c.y - .8 + CS.pitch * 6, c.z + fz * 16);
       const wy = waveH(tp.x, tp.z); tp.y = Math.max(tp.y, wy + 1.3); const k = snap || !CS.init ? 1 : 1 - Math.exp(-dt * 6); CS.pos.lerp(tp, k); CS.look.lerp(tl, k); CS.init = true; cam.fov = lerp(cam.fov, SET.fov - 4, Math.min(1, dt * 3)); cam.updateProjectionMatrix(); cam.position.copy(CS.pos); cam.up.set(0, 1, 0); cam.lookAt(CS.look); cam.near = .3; cam.updateProjectionMatrix(); if (!INP.look) { CS.yaw *= Math.exp(-dt * 2.2); CS.pitch *= Math.exp(-dt * 2.2); } return; }
     return _uc.apply(this, arguments); };
@@ -6273,7 +6276,7 @@ function buildUI() {
   pn.appendChild(row('Music volume', mkRange(0, 1, .01, () => SET.musicVol, v => { SET.musicVol = v; AUD.applyVolumes(); }, v => Math.round(v * 100) + '%')));
   pn.appendChild(row('Effects volume', mkRange(0, 1, .01, () => SET.sfxVol, v => { SET.sfxVol = v; AUD.applyVolumes(); }, v => Math.round(v * 100) + '%')));
   pn.appendChild(row('Ambient sounds', mkSwitch(() => SET.ambient, v => { SET.ambient = v; })));
-  pn.appendChild(row('3rd-person camera distance', mkRange(0, 1, .01, () => SET.camDist, v => { SET.camDist = v; CAMSTATE.init = false; }, v => (4 + v * 12).toFixed(1) + ' m')));
+  pn.appendChild(row('3rd-person camera distance', mkRange(0, 1, .01, () => SET.camDist, v => { SET.camDist = v; CAMSTATE.init = false; }, v => (8 + v * 22).toFixed(1) + ' m')));
   pn.appendChild(row('Field of view', mkRange(50, 100, 1, () => SET.fov, v => { SET.fov = v; }, v => v + '°')));
   pn.appendChild(row('Mouse look sensitivity', mkRange(.3, 2.5, .05, () => SET.mouseSens, v => { SET.mouseSens = v; }, v => v.toFixed(2) + '×')));
   const q = h('select'); [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra'], ['max', 'Max (supersampled)']].forEach(([k, n]) => { const o = h('option', '', n); o.value = k; q.appendChild(o); }); q.value = SET.quality; q.onchange = () => { SET.quality = q.value; persistSettings(); applyQuality(); }; q.addEventListener('keydown', e => e.stopPropagation());
