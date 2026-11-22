@@ -2241,11 +2241,11 @@ function seaAt(x, z) {
   return lerp(lerp(SEAm[i], SEAm[i + 1], tx), lerp(SEAm[i + MW], SEAm[i + MW + 1], tx), ty);
 }
 function waveAmp(x, z) { const d = -groundH(x, z); return lerp(0.55, 1.45, seaAt(x, z)) * smooth(0.15, 3, d) * WAVE_SCALE; }
-let WAVE_SCALE = 1;
+let WAVE_SCALE = 1, WCHOP = 1; // WCHOP = the weather: how big the open-water waves are (the wave zone and boat wakes aren't affected)
 function waveH(x, z, amp) {
   if (amp === undefined) amp = waveAmp(x, z);
   let h = 0; for (const w of WAVES) h += w.A * Math.sin(w.k * (w.dx * x + w.dz * z) - w.w * WTIME);
-  h += zoneH(x, z) + wakeH(x, z);
+  h *= WCHOP; h += zoneH(x, z) + wakeH(x, z);
   return h * amp;
 }
 // slope (dh/dx, dh/dz) for ski pitch/roll
@@ -2283,11 +2283,12 @@ vec3 skyCol(vec3 d, bool clouds){
   return c;
 }`;
 const GLSL_WAVES = (() => {
-  let s = 'uniform float uAmpScale; uniform vec4 uWk[64]; uniform float uWkW[64]; uniform float uWkN;\n';
+  let s = 'uniform float uAmpScale; uniform float uChop; uniform vec4 uWk[64]; uniform float uWkW[64]; uniform float uWkN;\n';
   s += 'float waveSum(vec2 p,float t,out vec2 g){float h=0.;g=vec2(0.);\n';
   for (const w of WAVES) {
     s += `{float ph=${w.k.toFixed(5)}*(${w.dx.toFixed(5)}*p.x+${w.dz.toFixed(5)}*p.y)-${w.w.toFixed(5)}*t;h+=${w.A}*sin(ph);float c=${(w.A * w.k).toFixed(6)}*cos(ph);g+=c*vec2(${w.dx.toFixed(5)},${w.dz.toFixed(5)});}\n`;
   }
+  s += 'h*=uChop;g*=uChop;\n'; // weather scales the open-water waves only
   s += `{vec2 zd=p-vec2(${WZONE.x.toFixed(2)},${WZONE.z.toFixed(2)});float zw=1.-smoothstep(${(WZONE.r * .7).toFixed(1)},${WZONE.r.toFixed(1)},length(zd));if(zw>0.){\n`;
   for (const w of WZW) s += `{float ph=${w.k.toFixed(5)}*(${w.dx.toFixed(5)}*p.x+${w.dz.toFixed(5)}*p.y)-${w.w.toFixed(5)}*t;h+=${w.A}*zw*sin(ph);float c=${(w.A * w.k).toFixed(6)}*zw*cos(ph);g+=c*vec2(${w.dx.toFixed(5)},${w.dz.toFixed(5)});}\n`;
   s += '}}\n';
@@ -2357,7 +2358,7 @@ function createWater(scene) {
   WATER.tex = makeDepthTexture();
   const uni = () => ({
     uT: { value: 0 }, uSun: { value: SUN_DIR }, uCloud: { value: 0.5 }, tDepth: { value: WATER.tex }, uCenter: { value: new THREE.Vector2() }, uCam: { value: new THREE.Vector3() },
-    uFogC: { value: new THREE.Color(...FOG_COL) }, uFogN: { value: 200 }, uFogF: { value: 1800 }, uAmpScale: { value: 1 }, uMap: { value: new THREE.Vector4(TWD * SC, MH * SC, ISL.x0 + TWD * SC / 2, 0) }, uYoff: { value: 0 }, uQ: { value: 1 }, uDay: DN.uDay, uDusk: DN.uDusk, uMoon: DN.uMoon, uWk: WK.uWk, uWkW: WK.uWkW, uWkN: WK.uWkN
+    uFogC: { value: new THREE.Color(...FOG_COL) }, uFogN: { value: 200 }, uFogF: { value: 1800 }, uAmpScale: { value: 1 }, uChop: { value: 1 }, uMap: { value: new THREE.Vector4(TWD * SC, MH * SC, ISL.x0 + TWD * SC / 2, 0) }, uYoff: { value: 0 }, uQ: { value: 1 }, uDay: DN.uDay, uDusk: DN.uDusk, uMoon: DN.uMoon, uWk: WK.uWk, uWkW: WK.uWkW, uWkN: WK.uWkN
   });
   const vs = GLSL_COMMON + GLSL_WAVES + `
 uniform vec2 uCenter; uniform sampler2D tDepth; uniform vec4 uMap; uniform float uYoff;
@@ -2429,7 +2430,7 @@ function updateWater(cam, t, q) {
   const si = 18, ix = Math.round(cam.x / si) * si, iz = Math.round(cam.z / si) * si; // both grids snap on a common 18 m multiple
   for (const [m, s] of [[WATER.inner, ix], [WATER.outer, ix]]) { }
   WATER.inner.material.uniforms.uCenter.value.set(ix, iz); WATER.outer.material.uniforms.uCenter.value.set(ix, iz);
-  WATER.mats.forEach(m => { const u = m.uniforms; u.uT.value = t; u.uCam.value.copy(cam); u.uFogN.value = q.far * 0.18; u.uFogF.value = q.far * 0.98; u.uAmpScale.value = WAVE_SCALE; u.uQ.value = q.clouds ? 1 : 0; });
+  WATER.mats.forEach(m => { const u = m.uniforms; u.uT.value = t; u.uCam.value.copy(cam); u.uFogN.value = q.far * 0.18; u.uFogF.value = q.far * 0.98; u.uAmpScale.value = WAVE_SCALE; if (u.uChop) u.uChop.value = WCHOP; u.uQ.value = q.clouds ? 1 : 0; });
   SKY.mat.uniforms.uT.value = t; SKY.mesh.position.copy(cam);
 }
 
@@ -2444,7 +2445,7 @@ function createFoam(scene) {
   g.setAttribute('aP', FOAM.attr); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(N * 4 * 3), 3)); g.setAttribute('aUV', new THREE.BufferAttribute(uvs, 2)); g.setIndex(idx);
   const m = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-    uniforms: { uT: { value: 0 }, uSun: { value: SUN_DIR }, uCloud: { value: 0.5 }, uDay: DN.uDay, uDusk: DN.uDusk, uMoon: DN.uMoon, uAmpScale: { value: 1 }, uFogC: { value: new THREE.Color(...FOG_COL) }, uFogN: { value: 200 }, uFogF: { value: 1800 }, uCam: { value: new THREE.Vector3() }, tDepth: { value: WATER.tex }, uMap: { value: new THREE.Vector4(TWD * SC, MH * SC, ISL.x0 + TWD * SC / 2, 0) }, uWk: WK.uWk, uWkW: WK.uWkW, uWkN: WK.uWkN },
+    uniforms: { uT: { value: 0 }, uSun: { value: SUN_DIR }, uCloud: { value: 0.5 }, uDay: DN.uDay, uDusk: DN.uDusk, uMoon: DN.uMoon, uAmpScale: { value: 1 }, uChop: { value: 1 }, uFogC: { value: new THREE.Color(...FOG_COL) }, uFogN: { value: 200 }, uFogF: { value: 1800 }, uCam: { value: new THREE.Vector3() }, tDepth: { value: WATER.tex }, uMap: { value: new THREE.Vector4(TWD * SC, MH * SC, ISL.x0 + TWD * SC / 2, 0) }, uWk: WK.uWk, uWkW: WK.uWkW, uWkN: WK.uWkN },
     vertexShader: GLSL_COMMON + GLSL_WAVES + `uniform sampler2D tDepth; uniform vec4 uMap; attribute vec4 aP; attribute vec2 aUV; varying vec2 vUV; varying float vA; varying vec3 vW; varying float vS;
 void main(){ vUV=aUV; vA=aP.w; vec2 p=aP.xy+aUV*aP.z; vec2 uv=(p-vec2(uMap.z,0.))/uMap.xy+.5; vec4 dt=texture2D(tDepth,uv); float depth=-(dt.r*32.-16.);
  float amp=mix(.55,1.45,dt.g)*smoothstep(.15,3.,depth)*uAmpScale; vec2 g; float h=waveSum(p,uT,g)*amp; vS=smoothstep(-.1,.3,depth);
@@ -2472,7 +2473,7 @@ function updateFoam(dt, cam, q, t) {
     for (let k = 0; k < 4; k++) { const o = i * 16 + k * 4; P[o] = m[i * 4]; P[o + 1] = m[i * 4 + 1]; P[o + 2] = sz; P[o + 3] = al; }
   }
   FOAM.attr.needsUpdate = true;
-  const u = FOAM.mat.uniforms; u.uT.value = t; u.uCam.value.copy(cam); u.uFogN.value = q.far * 0.18; u.uFogF.value = q.far * 0.98; u.uAmpScale.value = WAVE_SCALE; u.tDepth.value = WATER.tex;
+  const u = FOAM.mat.uniforms; u.uT.value = t; u.uCam.value.copy(cam); u.uFogN.value = q.far * 0.18; u.uFogF.value = q.far * 0.98; u.uAmpScale.value = WAVE_SCALE; if (u.uChop) u.uChop.value = WCHOP; u.tDepth.value = WATER.tex;
 }
 
 /* ===== 06b_daynight.js ===== */
@@ -4427,7 +4428,7 @@ function updatePlayer(dt, ctl) {
   // ---- throttle / brake ----
   const thrIn = ctl.thr, brkIn = ctl.brake;
   P.thr += (thrIn - P.thr) * Math.min(1, dt * (thrIn > P.thr ? 3.2 * (S.accel ? 2.5 : 1) : 4)); const maxSp = st.spd, accK = S.accel ? 2.6 : 1;
-  if (!P.spin) if ((P.air || 0) > .06) { /* airborne: the jet pump is out of the water, so no thrust and no braking */ } else if (brkIn > 0) { if (P.sp > 0.5) P.sp -= (30 + P.sp * .5) * dt * brkIn; else P.sp = Math.max(-9, P.sp - 14 * dt * brkIn); }
+  if (!P.spin) if ((P.air || 0) > .12 && P.y - waveH(P.x, P.z) > .35) { /* airborne: the jet pump is out of the water, so no thrust and no braking */ } else if (brkIn > 0) { if (P.sp > 0.5) P.sp -= (30 + P.sp * .5) * dt * brkIn; else P.sp = Math.max(-9, P.sp - 14 * dt * brkIn); }
   else if (P.thr > 0.02) P.sp += (maxSp * P.thr - P.sp) * (1 - Math.exp(-dt * .75 * st.acc * accK * (P.sp < maxSp * .5 ? 1.6 : 1)));
   else { P.sp *= Math.exp(-dt * (.32 + .02 * Math.abs(P.sp))); if (Math.abs(P.sp) < .3) P.sp = 0; }
   if (P.air > 0) P.sp *= Math.exp(-dt * .05);
@@ -4476,7 +4477,7 @@ function updatePlayer(dt, ctl) {
   const vSurf = (target - P.y) / Math.max(dt, 1e-3);
   const inZ = inWaveZone(P.x, P.z, 1.05); P.vy -= (inZ ? 13 : 20) * dt; P.y += P.vy * dt; let landAir = 0;
   if (P.y <= target) { const wasAir = P.air; if (P.air > .25 && P.vy < -3) { const k = Math.min(1, -P.vy / 8); splashAt(P.x, hC, P.z, 2 + 5 * k, 14); foam(P.x, P.z, 1.5, 6 + 3 * k, 2.6, .8); AUD.splash(.4 + .6 * k); P.sp *= 1 - .08 * k; P.camShake = Math.max(P.camShake, .5 * k); }
-    landAir = wasAir; P.y = target; P.vy = Math.max(P.vy * -.0, Math.min(vSurf, inZ ? 14 : 9) * (inZ ? .95 : .85)); P.air = 0; } else P.air += dt;
+    landAir = wasAir; P.y = target; const cap = inZ ? 14 : (WCHOP >= 1.5 ? 9 : 1.6); P.vy = Math.max(0, Math.min(vSurf, cap) * (inZ ? .95 : .85)); P.air = 0; } else P.air += dt;
   const pitchW = Math.atan2(hB - hS, L * .84), rollW = Math.atan2(hL - hR, 1.2);
   const accel = (P.sp - P.spSm) / Math.max(dt, 1e-3); P.spSm = P.sp; P.accel = lerp(P.accel, accel, Math.min(1, dt * 4));
   const pitchTarget = pitchW * .9 + .055 * planing * (1 + .5 * clamp(P.accel / 20, 0, 1)) + (P.air > .1 ? clamp(P.vy * .012, -.15, .1) + tdir * .45 : 0);
@@ -4490,7 +4491,7 @@ function updatePlayer(dt, ctl) {
   const nz = P.ski.userData.nozzle, ang = trimAngle(); nz.rotation.order = 'YXZ'; nz.rotation.x = ang; P.nzA = (P.nzA || 0) + (clamp(P.steer, -1, 1) - (P.nzA || 0)) * (1 - Math.exp(-dt * 3.2)); nz.rotation.y = -P.nzA * (30 * Math.PI / 180); P.ski.updateMatrixWorld(true); // cosmetic only: pump swivels with the bars and aims the spray
   nz.getWorldPosition(P.noz); nz.getWorldQuaternion(_q); P.dir.set(0, 0, -1).applyQuaternion(_q); // actual nozzle exit direction in world
   _v1.copy(P.dir).multiplyScalar(.12); P.noz.add(_v1);
-  const airOut = (P.air || 0) > .06, empty = P.tank <= 0.5, flow = P.spin || airOut ? 0 : (P.burst > 0 ? 1 : (P.thr > .06 ? clamp(P.thr, 0, 1) : .0) * (empty ? .24 : 1)); P.flow = lerp(P.flow, flow, Math.min(1, dt * (P.spin ? 40 : 10))); if (P.spin || airOut) P.flow = 0; if (P.burst > 0) P.burst -= dt;
+  const airOut = (P.air || 0) > .12 && P.y - waveH(P.x, P.z) > .35, empty = P.tank <= 0.5, flow = P.spin || airOut ? 0 : (P.burst > 0 ? 1 : (P.thr > .06 ? clamp(P.thr, 0, 1) : .0) * (empty ? .24 : 1)); P.flow = lerp(P.flow, flow, Math.min(1, dt * (P.spin ? 40 : 10))); if (P.spin || airOut) P.flow = 0; if (P.burst > 0) P.burst -= dt;
   if (P.thr > .06 && !empty) P.tank = Math.max(0, P.tank - dt * (9 + 5 * P.thr)); else P.tank = Math.min(st.tank, P.tank + dt * st.fill * (P.thr > .06 ? .15 : 1));
   if (P.tank <= 0.5 && P.thr < .1) P.tank += dt * st.fill;
   if (P.id !== 'gti') P.tank = st.tank; // only the GTI 90 has a limited stream tank
@@ -8528,9 +8529,17 @@ const _gf8 = gameFrame; gameFrame = function (dt) {
   } catch (e) { dbg('z6: ' + e.message); }
 };
 /* ===== WEATHER, TRICKS, DRINKS, SEAPLANE, TYSON HICKEY, STORY PATHS ===== */
-const WXS = [{ n: 'Calm', chop: .75, w: .5 }, { n: 'Breezy', chop: 1, w: 1 }, { n: 'Choppy', chop: 1.7, w: 1.6 }, { n: 'Stormy', chop: 2.3, w: 2.2 }];
-const WX = Object.assign({}, WXS[[0, 1, 1, 2, 2, 3][Math.floor(Math.random() * 6)]]); let _wxT = 0;
-const _wa = waveAmp; waveAmp = function (x, z) { return _wa(x, z) * WX.chop; };
+const WXS = [{ n: 'Glassy', chop: .08, w: .15 }, { n: 'Calm', chop: .45, w: .5 }, { n: 'Breezy', chop: 1, w: 1 }, { n: 'Choppy', chop: 1.7, w: 1.6 }, { n: 'Stormy', chop: 2.3, w: 2.2 }];
+const WX = Object.assign({}, WXS[0]); let _wxT = 0; WCHOP = WX.chop;
+// weather: glassy and dead flat most of the time, now and then calm, and rarely a short spell of rough water; changes ease in over ~20 s
+const WXT = { tgt: WXS[0], left: 360 + Math.random() * 360 };
+function wxStep(dt) {
+  WXT.left -= dt;
+  if (WXT.left <= 0) { const r = Math.random(), nx = WXT.tgt.chop >= 1.5 ? WXS[0] : r < .7 ? WXS[0] : r < .85 ? WXS[1] : r < .95 ? WXS[3] : WXS[4];
+    WXT.left = nx.chop >= 1.5 ? 75 + Math.random() * 75 : 360 + Math.random() * 360;
+    if (nx !== WXT.tgt) { WXT.tgt = nx; WX.n = nx.n; toast('Weather: ' + nx.n + (nx.chop >= 1.5 ? ' — rough water for a bit!' : nx.n === 'Glassy' ? ' — dead flat' : '')); } }
+  const k = Math.min(1, dt / 10); WX.chop += (WXT.tgt.chop - WX.chop) * k; WX.w += (WXT.tgt.w - WX.w) * k; WCHOP = WX.chop;
+}
 const _em7 = emitP; emitP = function (x, y, z, vx, vy, vz, size, life, kind = 0) { if (kind === 1 && size < 1.5 && Math.hypot(x - P.x, z - P.z) < 10) size *= 1 + Math.min(1, WIND.s / 16) * .8; _em7(x, y, z, vx, vy, vz, size, life, kind); };
 /* drinks */
 const WOOZ = { t: 0, on: false };
@@ -8588,7 +8597,7 @@ const _h7 = HIT_CB; HIT_CB = function (t, pi) { const e = t.ref; if (e && S && S
 let _z7 = false, _wasW = false; const _gf9 = gameFrame; gameFrame = function (dt) {
   _gf9.call(this, dt); if (G.state !== 'play' || G.paused) return;
   try {
-    _wxT += dt; if (_wxT > 480) { _wxT = 0; Object.assign(WX, WXS[Math.floor(Math.random() * 4)]); toast('Weather: ' + WX.n); }
+    wxStep(dt);
     if (!_z7 && NSOT.list.length && window.__marcusSki) { _z7 = true;
       const e = NSOT.list[0]; e.tyson = true; e.need = 3; try { G.scene.remove(e.root); if (e.hum) G.scene.remove(e.hum.root); const rt = buildSki('fm47'); rt.rotation.order = 'YXZ'; G.scene.add(rt); const u = rt.userData, hp = u.seat || u.hip, hm = buildHuman(playerApp()); placeHuman(hm, rt, hp.x, hp.y - .45, hp.z, 0); hm.root.traverse(m => { m.frustumCulled = false; }); e.root = rt; e.hum = hm; e.id = 'fm47'; } catch (er) { dbg('tyson boat: ' + er.message); } G.scene.remove(e.lbl); e.lbl = nameSprite('TYSON HICKEY · NSOT LEADER', '#ff2020'); G.scene.add(e.lbl); TY.e = e; TY.a = { role: 'tyson', rn: 'Tyson Hickey', name: 'Tyson Hickey', x: e.x, z: e.z, y: 0, h: 0, sp: 0 };
       const ms = window.__marcusSki, w = wpt(ms.position.x + 30, ms.position.z + 12, 200); 
@@ -10980,7 +10989,7 @@ function rmMist(dt) {
   const k = RMM.k = (Q === QUALITY.low ? .4 : Q === QUALITY.medium ? .7 : 1) * (RM_FPSMODE === 'fps' ? .75 : 1);
   const N = PART.N, p = PART.pos, v = PART.vel, age = PART.age, life = PART.life, roo = PART.roo, kind = PART.kind, as = PART.aSize, aa = PART.aAlpha, R = Math.random;
   // spawn budgets per frame; last frame's demand scales every droplet's chance evenly, so no part of the plume is starved
-  const budget0 = Math.ceil(5000 * k * dt) + 2, sc = RMM.dem > 0 ? Math.min(1, budget0 / RMM.dem) : 1; let budget = budget0, dem = 0, shB = Math.ceil(3000 * k * dt) + 1; const fill0 = Math.ceil(8000 * k * dt) + 1, fsc = RMM.fdem > 0 ? Math.min(1, fill0 / RMM.fdem) : 1; let fillB = fill0, fdem = 0;
+  const budget0 = Math.ceil(5000 * k * dt) + 2, sc = RMM.dem > 0 ? Math.min(1, budget0 / RMM.dem) : 1; let budget = budget0, dem = 0, shB = Math.ceil(4000 * k * dt) + 1; const fill0 = Math.ceil(10000 * k * dt) + 1, fsc = RMM.fdem > 0 ? Math.min(1, fill0 / RMM.fdem) : 1; let fillB = fill0, fdem = 0;
   const off = (R() * N) | 0;
   for (let n = 0; n < N; n++) {
     const i = n + off < N ? n + off : n + off - N, t = roo[i]; if (t === 0) continue; const a = age[i], k3 = i * 3;
@@ -10992,13 +11001,13 @@ function rmMist(dt) {
     // V shape: the plume's width grows in a straight line from the narrow nozzle all the way up the climb
     // (lin goes 0 -> 1 between leaving the nozzle and the top of the arc). Other players' droplets are drawn bigger by the stock code, so they start smaller here.
     const vy0 = vy + 20 * a, Ta = Math.min(1.2, Math.max(.6, vy0 / 20)), lin = Math.min(1, a / Ta), fall = smooth(1, 9, -vy), g2 = () => R() + R() - 1;
-    as[i] *= (s ? .95 : .5) * (1 + 2.8 * lin) * (1 + .4 * fall); aa[i] *= (s ? lerp(1, .62, lin) : .7) * lerp(1, .55, fall);
-    const wk = (s ? 1 : .25) * k, w = .1 + 2.2 * lin; // half-width of the V at this point (m)
-    if (fillB > 0) { const fr = (s ? 4.5 + 5 * lin : 1.2) * k; fdem += fr * dt; if (R() < fr * dt * fsc) { fillB--; const j = .25 + .9 * lin;
-      rm3Fill(p[k3] + g2() * 1.2 * w, p[k3 + 1] + g2() * .8 * w, p[k3 + 2] + g2() * 1.2 * w, vx + g2() * 2 * j, vy + g2() * 1.4 * j, vz + g2() * 2 * j, (.11 + R() * .13) * (.9 + 1.3 * lin), .4 + R() * .45); } }
+    as[i] *= (s ? 1.25 : .65) * (1 + 3.2 * lin) * (1 + .4 * fall); aa[i] *= (s ? lerp(1, .62, lin) : .7) * lerp(1, .55, fall);
+    const wk = (s ? 1 : .25) * k, w = .15 + 3.4 * lin; // half-width of the V at this point (m)
+    if (fillB > 0) { const fr = (s ? 6 + 6 * lin : 1.4) * k; fdem += fr * dt; if (R() < fr * dt * fsc) { fillB--; const j = .25 + .9 * lin;
+      rm3Fill(p[k3] + g2() * 1.2 * w, p[k3 + 1] + g2() * .8 * w, p[k3 + 2] + g2() * 1.2 * w, vx + g2() * 2 * j, vy + g2() * 1.4 * j, vz + g2() * 2 * j, (.13 + R() * .16) * (1 + 1.6 * lin), .4 + R() * .45); } }
     if (a < Ta) { // the climbing part: a rolling, lumpy sheath that fills the V evenly from the narrow base up
-      if (a > .02 && shB > 0 && R() < 9 * wk * dt) { shB--; const m = .85 + R() * .1, j = .35 + 1.1 * lin;
-        rmMistAdd(p[k3] + g2() * 1.1 * w, p[k3 + 1] + g2() * .8 * w, p[k3 + 2] + g2() * 1.1 * w, vx * m + g2() * 2 * j, vy * m + g2() * 1.4 * j, vz * m + g2() * 2 * j, .35 + R() * .3 + 2.4 * lin, 1.1, .5 + R() * .45, .26 + R() * .12); }
+      if (a > .02 && shB > 0 && R() < 12 * wk * dt) { shB--; const m = .85 + R() * .1, j = .35 + 1.1 * lin;
+        rmMistAdd(p[k3] + g2() * 1.1 * w, p[k3 + 1] + g2() * .8 * w, p[k3 + 2] + g2() * 1.1 * w, vx * m + g2() * 2 * j, vy * m + g2() * 1.4 * j, vz * m + g2() * 2 * j, .5 + R() * .4 + 3.4 * lin, 1.1, .55 + R() * .45, .3 + R() * .12); }
       continue; }
     const crown = 1 - smooth(0, 6, Math.abs(vy)), veil = smooth(2, 8, -vy), brk = smooth(Ta, Ta + .3, a) * (1 - smooth(Ta + .8, Ta + 1.6, a));
     const w1 = 1.1 * brk, w2 = 3 * crown, w3 = 2.2 * veil, rate = (w1 + w2 + w3) * wk; dem += rate * dt;
