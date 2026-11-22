@@ -19,6 +19,11 @@ const WH = process.env.STRIPE_WEBHOOK_SECRET || '';
 const DEMO = process.env.SPLASH_DEMO === '1' && !KEY;
 const FILE = path.join(__dirname, 'splash.json');
 const CURRENCY = 'aud';
+// Stripe Managed Payments (on by default on this account) needs a product tax code. Splash Coins are in-game currency for a video game,
+// so they use Stripe's video game code. Change it with the STRIPE_TAX_CODE environment variable if Stripe tells you to.
+const TAX_CODE = process.env.STRIPE_TAX_CODE || 'txcd_10201000';
+// Set STRIPE_MANAGED_PAYMENTS=off to turn Managed Payments off for coin purchases (then you handle GST yourself).
+const MANAGED = String(process.env.STRIPE_MANAGED_PAYMENTS || 'on').toLowerCase() !== 'off';
 // coins -> price in cents
 const PACKS = { p10: { coins: 10, cents: 50 }, p50: { coins: 50, cents: 100 }, p100: { coins: 100, cents: 150 }, p500: { coins: 500, cents: 450 } };
 const CASH_PER_COIN = 10000; // 10 coins = $100,000 in game
@@ -91,9 +96,10 @@ async function handle(req, res, url) {
       const meta = { sid: id, coins: String(pack.coins) };
       const s = await stripe('POST', 'checkout/sessions', {
         mode: 'payment',
-        line_items: { 0: { quantity: 1, price_data: { currency: CURRENCY, unit_amount: pack.cents, product_data: { name: pack.coins + ' Splash Coins', description: 'Swan River Soaker in-game currency (worth ' + '$' + (pack.coins * CASH_PER_COIN).toLocaleString('en-AU') + ' in game)' } } } },
+        line_items: { 0: { quantity: 1, price_data: { currency: CURRENCY, unit_amount: pack.cents, tax_behavior: 'inclusive', product_data: { tax_code: TAX_CODE, name: pack.coins + ' Splash Coins', description: 'Swan River Soaker in-game currency (worth ' + '$' + (pack.coins * CASH_PER_COIN).toLocaleString('en-AU') + ' in game)' } } } },
         metadata: meta, payment_intent_data: { metadata: meta, description: pack.coins + ' Splash Coins' }, client_reference_id: id,
-        success_url: origin + '/?splash=ok&session_id={CHECKOUT_SESSION_ID}', cancel_url: origin + '/?splash=cancel'
+        success_url: origin + '/?splash=ok&session_id={CHECKOUT_SESSION_ID}', cancel_url: origin + '/?splash=cancel',
+        ...(MANAGED ? {} : { managed_payments: { enabled: 'false' } })
       });
       return json(res, 200, { url: s.url });
     }
