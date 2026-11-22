@@ -4544,16 +4544,20 @@ function animateRider(dt, firstPerson) {
 }
 
 /* ---------- cameras ---------- */
-function camDistance() { return lerp(5.5, 24, SET.camDist); }
+function camDistance() { return lerp(4, 16, SET.camDist); }
 function updateCamera(dt, cam, snap) {
   const CS = CAMSTATE, m = CS.mode, fx = P.fx, fz = P.fz, dist = camDistance() * (P.mode === 'boat' ? P.ski.userData.camK : 1), shake = P.camShake * .25;
   const ud = P.ski.userData; P.ski.updateMatrixWorld(true);
   const headW = (ud.eye ? ud.eye.clone() : new THREE.Vector3(0, ud.hip.y + .95, ud.hip.z + .1)).applyMatrix4(P.ski.matrixWorld);
   const lookYaw = CS.yaw, lookPitch = CS.pitch;
-  const wantFov = SET.fov + clamp(Math.abs(P.sp) / (P.st.spd) , 0, 1.2) * 7;
+  const wantFov = SET.fov + (m >= 2 ? clamp(Math.abs(P.sp) / (P.st.spd) , 0, 1.2) * 7 : 0); // 3rd person keeps a steady view: no zooming with speed
   cam.fov = lerp(cam.fov, wantFov, Math.min(1, dt * 3)); cam.updateProjectionMatrix();
   const tp = new THREE.Vector3(), tl = new THREE.Vector3();
-  if (m === 0 || m === 1) {
+  if (m === 0) { // behind: fixed distance and height (no zooming in or out with speed); only the heading is smoothed so it swings round through turns
+    const want = P.h + lookYaw; if (CS.ch === undefined || snap || !CS.init) CS.ch = want; CS.ch += Math.atan2(Math.sin(want - CS.ch), Math.cos(want - CS.ch)) * Math.min(1, dt * 5);
+    const up = 1.8 + dist * (.4 + lookPitch * .4) + (P.mode === 'boat' ? P.ski.userData.camUp : 0);
+    tp.set(P.x - Math.sin(CS.ch) * dist, P.y + up, P.z - Math.cos(CS.ch) * dist); tl.set(P.x + Math.sin(CS.ch) * 4, P.y + .9, P.z + Math.cos(CS.ch) * 4);
+  } else if (m === 1) {
     const sgn = m === 0 ? -1 : 1, d = dist * (m === 1 ? .72 : 1), up = 1.2 + d * (.2 + lookPitch * .4) + (m === 1 ? .4 : 0) + (P.mode === 'boat' ? P.ski.userData.camUp : 0), ca = P.h + lookYaw;
     tp.set(P.x + Math.sin(ca) * d * sgn, P.y + up, P.z + Math.cos(ca) * d * sgn);
     if (m === 0) tl.set(P.x + fx * 6, P.y + 1.1, P.z + fz * 6); else tl.set(P.x, P.y + 1.2, P.z);
@@ -4562,7 +4566,8 @@ function updateCamera(dt, cam, snap) {
   // land / water clearance for third person
   if (m < 2) { const gh = groundH(tp.x, tp.z); const wy = gh < 0 ? waveH(tp.x, tp.z) : gh; tp.y = Math.max(tp.y, wy + 1.1); if (gh > 0) tp.y = Math.max(tp.y, gh + 1.5); }
   const fast = P.mode === 'boat' ? Math.min(34, Math.abs(P.sp) * .32) : 0, k = snap || !CS.init ? 1 : 1 - Math.exp(-dt * (m < 2 ? 7 + fast : 40));
-  CS.pos.lerp(tp, k); CS.look.lerp(tl, snap || !CS.init ? 1 : 1 - Math.exp(-dt * (m < 2 ? 10 + fast : 40))); CS.init = true;
+  if (m === 0 && CS.init && !snap) { const ky = 1 - Math.exp(-dt * 6); CS.pos.set(tp.x, CS.pos.y + (tp.y - CS.pos.y) * ky, tp.z); CS.look.set(tl.x, CS.look.y + (tl.y - CS.look.y) * ky, tl.z); }
+  else { CS.pos.lerp(tp, k); CS.look.lerp(tl, snap || !CS.init ? 1 : 1 - Math.exp(-dt * (m < 2 ? 10 + fast : 40))); } CS.init = true;
   cam.position.copy(CS.pos); if (shake) { cam.position.x += (Math.random() - .5) * shake; cam.position.y += (Math.random() - .5) * shake; }
   cam.up.set(0, 1, 0); cam.lookAt(CS.look);
   if (m >= 2) { cam.rotateZ(-P.lean * .35 * (m === 2 ? 1 : -1)); }
@@ -6268,7 +6273,7 @@ function buildUI() {
   pn.appendChild(row('Music volume', mkRange(0, 1, .01, () => SET.musicVol, v => { SET.musicVol = v; AUD.applyVolumes(); }, v => Math.round(v * 100) + '%')));
   pn.appendChild(row('Effects volume', mkRange(0, 1, .01, () => SET.sfxVol, v => { SET.sfxVol = v; AUD.applyVolumes(); }, v => Math.round(v * 100) + '%')));
   pn.appendChild(row('Ambient sounds', mkSwitch(() => SET.ambient, v => { SET.ambient = v; })));
-  pn.appendChild(row('3rd-person camera distance', mkRange(0, 1, .01, () => SET.camDist, v => { SET.camDist = v; CAMSTATE.init = false; }, v => (5.5 + v * 18.5).toFixed(1) + ' m')));
+  pn.appendChild(row('3rd-person camera distance', mkRange(0, 1, .01, () => SET.camDist, v => { SET.camDist = v; CAMSTATE.init = false; }, v => (4 + v * 12).toFixed(1) + ' m')));
   pn.appendChild(row('Field of view', mkRange(50, 100, 1, () => SET.fov, v => { SET.fov = v; }, v => v + '°')));
   pn.appendChild(row('Mouse look sensitivity', mkRange(.3, 2.5, .05, () => SET.mouseSens, v => { SET.mouseSens = v; }, v => v.toFixed(2) + '×')));
   const q = h('select'); [['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra'], ['max', 'Max (supersampled)']].forEach(([k, n]) => { const o = h('option', '', n); o.value = k; q.appendChild(o); }); q.value = SET.quality; q.onchange = () => { SET.quality = q.value; persistSettings(); applyQuality(); }; q.addEventListener('keydown', e => e.stopPropagation());
@@ -10942,7 +10947,7 @@ function rmMistInit(scene) {
     uniforms: { uScale: { value: 600 }, uMaxPx: { value: 260 }, uCam: { value: new THREE.Vector3() }, uSun: { value: SUN_DIR }, uSki: { value: new THREE.Vector3(0, -999, 0) }, uFogC: { value: new THREE.Color(...FOG_COL) }, uFogN: { value: 300 }, uFogF: { value: 1800 }, uLight: { value: 1 } },
     vertexShader: 'attribute float aSize; attribute float aAlpha; attribute float aSeed; uniform float uScale; uniform float uMaxPx; uniform vec3 uCam; uniform vec3 uSki; uniform vec3 uSun; varying float vA; varying float vD; varying float vS; varying float vG;\n' +
       'void main(){ vec4 mv=modelViewMatrix*vec4(position,1.); gl_Position=projectionMatrix*mv; float d=max(-mv.z,.1); float px=aSize*uScale/d; gl_PointSize=min(px,uMaxPx);\n' +
-      ' vec3 lA=position-uCam; vec3 lB=uSki-uCam; float lb=max(length(lB),.1); vec3 ln=lB/lb; float lt=dot(lA,ln); float lang=length(lA-ln*lt)/max(lt,.1); float lsk=1.9/lb; float lpa=aSize*.5/max(lt,.1); float los=mix(smoothstep(lsk*.6+lpa*.2,lsk*1.3+lpa*.6,lang),1.,smoothstep(lb-1.4,lb-.1,lt));\n' +
+      ' vec3 lA=position-uCam; vec3 lB=uSki-uCam; float lb=max(length(lB),.1); vec3 ln=lB/lb; float lt=dot(lA,ln); float lang=length(lA-ln*lt)/max(lt,.1); float lsk=1.9/lb; float lpa=aSize*.5/max(lt,.1); float los=1.;\n' +
       ' vA=aAlpha*los*smoothstep(2.,7.,d)*pow(min(1.,uMaxPx/max(px,1.)),2.); vD=d; vS=aSeed; vG=pow(max(dot(normalize(position-uCam),uSun),0.),5.)*smoothstep(-.05,.15,uSun.y); }',
     fragmentShader: 'precision mediump float; uniform vec3 uFogC; uniform float uLight; uniform float uFogN; uniform float uFogF; varying float vA; varying float vD; varying float vS; varying float vG;\n' +
       'void main(){ vec2 c=(gl_PointCoord-.5)*2.; float an=vS*6.2831; float cs=cos(an), sn=sin(an); vec2 q=vec2(c.x*cs-c.y*sn, c.x*sn+c.y*cs);\n' +
@@ -10956,7 +10961,7 @@ function rmMistInit(scene) {
   // the spray droplets get the same treatment: whatever sits between the camera and your own ski turns see-through, so the ski never vanishes behind its own rooster tail
   const pm = PART.mat; if (pm && pm.vertexShader.indexOf('uSki') < 0 && pm.vertexShader.indexOf('vA=aAlpha') >= 0) {
     pm.uniforms.uCam = RMM.mat.uniforms.uCam; pm.uniforms.uSki = RMM.mat.uniforms.uSki;
-    pm.vertexShader = pm.vertexShader.replace('uniform float uScale;', 'uniform float uScale; uniform vec3 uCam; uniform vec3 uSki;').replace('vA=aAlpha', 'vec3 lA=position-uCam; vec3 lB=uSki-uCam; float lb=max(length(lB),.1); vec3 ln=lB/lb; float lt=dot(lA,ln); float lang=length(lA-ln*lt)/max(lt,.1); float lsk=1.9/lb; float lpa=aSize*.5/max(lt,.1); float los=mix(smoothstep(lsk*.6+lpa*.2,lsk*1.3+lpa*.6,lang),1.,smoothstep(lb-1.4,lb-.1,lt)); vA=los*aAlpha');
+    pm.vertexShader = pm.vertexShader.replace('uniform float uScale;', 'uniform float uScale; uniform vec3 uCam; uniform vec3 uSki;').replace('vA=aAlpha', 'vec3 lA=position-uCam; vec3 lB=uSki-uCam; float lb=max(length(lB),.1); vec3 ln=lB/lb; float lt=dot(lA,ln); float lang=length(lA-ln*lt)/max(lt,.1); float lsk=1.9/lb; float lpa=aSize*.5/max(lt,.1); float los=1.; vA=los*aAlpha');
     pm.needsUpdate = true; RM.info.sprayLos = 1; }
   RMM.mesh = new THREE.Points(g, RMM.mat); RMM.mesh.frustumCulled = false; RMM.mesh.renderOrder = 4; RMM.mesh.name = 'rmMist'; scene.add(RMM.mesh);
   RM.info.mist = 1;
@@ -10980,12 +10985,12 @@ function rmMist(dt) {
     const s = kind[i] === 0, vx = v[k3], vy = v[k3 + 1], vz = v[k3 + 2], hv = Math.hypot(vx, vz);
     // thick at the base and widening as it climbs (other players' droplets are drawn bigger by the stock code, so bring them to the same size first)
     // once it passes the top the water has shattered: the falling side spreads out and turns see-through
-    const fall = smooth(1, 9, -vy), grow = smooth(.04, .9, a);
-    as[i] *= (s ? 1.45 : .8) * (1 + 6 * grow) * (1 + .5 * fall); aa[i] *= (s ? lerp(1, .75, grow) : .8) * lerp(1, .5, fall);
+    const fall = smooth(1, 9, -vy), grow = smooth(.03, 1, a);
+    as[i] *= (s ? .85 : .48) * (1 + 12 * Math.pow(grow, 1.3)) * (1 + .5 * fall); aa[i] *= (s ? lerp(1, .75, grow) : .8) * lerp(1, .5, fall);
     const wk = (s ? 1 : .25) * k, sheath = (1 - smooth(.3, .55, a)) * smooth(.02, .1, a), up = smooth(0, .5, a);
     if (a < .55) { // rolling, lumpy sheath around the young jet: a thick column, not a line
-      if (shB > 0 && R() < 14 * sheath * wk * dt) { shB--; const m = .8 + R() * .15, sp = 1 + 3 * up;
-        rmMistAdd(p[k3] + (R() - .5) * .4, p[k3 + 1] + (R() - .5) * .4, p[k3 + 2] + (R() - .5) * .4, vx * m + (R() - .5) * 2 * sp, vy * m + (R() - .4) * 2 * sp, vz * m + (R() - .5) * 2 * sp, 1.1 + R() * .9 + 3.6 * up, 1.4, .55 + R() * .5, .33 + R() * .13); }
+      if (shB > 0 && R() < 14 * sheath * wk * dt) { shB--; const m = .8 + R() * .15, sp = .5 + 5 * up * up;
+        rmMistAdd(p[k3] + (R() - .5) * .4, p[k3 + 1] + (R() - .5) * .4, p[k3 + 2] + (R() - .5) * .4, vx * m + (R() - .5) * 2 * sp, vy * m + (R() - .4) * 2 * sp, vz * m + (R() - .5) * 2 * sp, .45 + R() * .35 + 5.5 * up * up, 1.5, .55 + R() * .5, .33 + R() * .13); }
       continue; }
     const crown = (1 - smooth(0, 6, Math.abs(vy))) * smooth(.12, .35, a), veil = smooth(2, 8, -vy) * smooth(.3, .6, a), brk = smooth(.3, .6, a) * (1 - smooth(1.1, 2, a));
     const w1 = 1.1 * brk, w2 = 4 * crown, w3 = 2.2 * veil, rate = (w1 + w2 + w3) * wk; dem += rate * dt;
@@ -10994,11 +10999,11 @@ function rmMist(dt) {
     // sideways = across the plume (perpendicular to where the droplet is heading)
     let lx, lz; if (hv > 1) { lx = -vz / hv; lz = vx / hv; } else { const an = R() * 6.2832; lx = Math.cos(an); lz = Math.sin(an); }
     if (pick < w1) { // the jet tearing apart into mist as it flies
-      const m = .45 + R() * .4, sp = 2 + 3.5 * smooth(.05, .8, a);
-      rmMistAdd(p[k3] + (R() - .5) * .5, p[k3 + 1] + (R() - .5) * .5, p[k3 + 2] + (R() - .5) * .5, vx * m + (R() - .5) * 2 * sp, vy * m + (R() - .3) * sp, vz * m + (R() - .5) * 2 * sp, 1.6 + R() * 1.6 + 2.8 * smooth(.1, 1, a), 1.6 + R() * 1.8, 1 + R() * 1.2, .18 + R() * .12);
+      const m = .45 + R() * .4, sp = 2.5 + 6 * smooth(.05, .8, a);
+      rmMistAdd(p[k3] + (R() - .5) * .5, p[k3 + 1] + (R() - .5) * .5, p[k3 + 2] + (R() - .5) * .5, vx * m + (R() - .5) * 2 * sp, vy * m + (R() - .3) * sp, vz * m + (R() - .5) * 2 * sp, 2 + R() * 2 + 4.5 * smooth(.1, 1, a), 1.7 + R() * 1.8, 1 + R() * 1.2, .18 + R() * .12);
     } else if (pick < w1 + w2) { // crown: the top of the arch curls over and fans out wide, like a fountain head
-      const m = .3 + R() * .35, f = (R() - .5) * 2, side = f * (4 + 10 * Math.abs(f));
-      rmMistAdd(p[k3] + (R() - .5) * .8, p[k3 + 1] + (R() - .4) * .8, p[k3 + 2] + (R() - .5) * .8, vx * m + lx * side + (R() - .5) * 2, (R() - .1) * 3.5, vz * m + lz * side + (R() - .5) * 2, 2.8 + R() * 2.8, 1.9 + R() * 1.8, 1.5 + R() * 1.4, .17 + R() * .12);
+      const m = .3 + R() * .35, f = (R() - .5) * 2, side = f * (5 + 14 * Math.abs(f));
+      rmMistAdd(p[k3] + (R() - .5) * .8, p[k3 + 1] + (R() - .4) * .8, p[k3 + 2] + (R() - .5) * .8, vx * m + lx * side + (R() - .5) * 2, (R() - .1) * 3.5, vz * m + lz * side + (R() - .5) * 2, 3.6 + R() * 3.6, 1.9 + R() * 1.8, 1.5 + R() * 1.4, .17 + R() * .12);
     } else { // veil: the falling side comes down as a wide, see-through curtain of fine spray
       const m = .35 + R() * .15, side = (R() - .5) * 8;
       rmMistAdd(p[k3] + (R() - .5) * .6, p[k3 + 1] + (R() - .5) * .6, p[k3 + 2] + (R() - .5) * .6, vx * m + lx * side, vy * .35 - R(), vz * m + lz * side, 1.6 + R() * 1.8, 2 + R() * 1.2, 1 + R() * .8, .1 + R() * .07);
